@@ -1,0 +1,147 @@
+---
+- name: Import global variables (required due to import playbook for K3s)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Import global variables (required due to import playbook for K3s)
+      set_fact:
+        ansible_become_password: "{{ ansible_become_password }}"
+        k3s_version: "{{ k3s_version_num }}"
+        api_endpoint: "{{ api_endpoint_str }}"
+      delegate_to: localhost
+      run_once: true
+      no_log: true
+
+- name: Initialize system
+  hosts: all
+  tags: init
+  become: true
+  roles:
+    - {
+        role: exploide.dnf-automatic,
+        dnf_automatic_reboot: true,
+        dnf_automatic_reboot_OnCalendar: "04:00",
+      }
+  tasks:
+    - name: Stop, disable, and mask firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+        masked: yes
+
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname | replace('_', '-') }}"
+
+    - name: Ensure updated packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+
+- name: Install Tailscale
+  hosts: all
+  become: true
+
+  roles:
+    - role: artis3n.tailscale.machine
+      vars:
+        tailscale_authkey: "{{ lookup('env', 'TAILSCALE_KEY') }}"
+        tailscale_args: "--ssh"
+
+- name: Install K3s
+  tags: deploy_k3s
+  ansible.builtin.import_playbook: k3s.orchestration.site
+
+- name: Copy kubeconfig to current user's home
+  hosts: all
+  become: false
+  tags: k8s,kubeconfig
+
+  tasks:
+    - name: Copy K3s kubeconfig
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ~/.kube/config
+        flat: yes
+      become: yes
+
+    - name: Fix server address in kubeconfig
+      ansible.builtin.replace:
+        path: ~/.kube/config
+        regexp: "https://127.0.0.1:6443"
+        replace: "https://{{ ansible_host }}:6443"
+      delegate_to: localhost
+
+- name: Setup Traefik with Porkbun certs
+  hosts: localhost
+  become: false
+  tags: traefik,k8s
+
+  tasks:
+    - name: Create Porkbun API credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: porkbun-api-credentials
+            namespace: kube-system
+          type: Opaque
+          stringData:
+            api-key: "{{ porkbun_api_key }}"
+            secret-api-key: "{{ porkbun_api_secret }}"
+
+    - name: Configure traefik to use certificates
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/traefik_porkbun.yml
+
+- name: Harden Log Rotation for K3s and Systemd
+  hosts: all
+  become: true
+  tags: k8s,logging
+  tasks:
+    - name: Limit journald total disk usage to 500MB
+      ansible.builtin.lineinfile:
+        create: yes
+        path: /etc/systemd/journald.conf
+        regexp: "^#?SystemMaxUse="
+        line: "SystemMaxUse=500M"
+      notify: Restart journald
+
+    - name: Ensure journald persistent storage is enabled
+      ansible.builtin.lineinfile:
+        create: yes
+        path: /etc/systemd/journald.conf
+        regexp: "^#?Storage="
+        line: "Storage=persistent"
+      notify: Restart journald
+
+    - name: Ensure K3s config directory exists
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: "0755"
+
+    - name: Configure K3s log rotation via config.yaml
+      ansible.builtin.blockinfile:
+        path: /etc/rancher/k3s/config.yaml
+        create: yes
+        block: |
+          kubelet-arg:
+            - "container-log-max-files=3"
+            - "container-log-max-size=10Mi"
+      notify: Restart k3s
+
+  handlers:
+    - name: Restart journald
+      ansible.builtin.service:
+        name: systemd-journald
+        state: restarted
+
+    - name: Restart k3s
+      ansible.builtin.service:
+        name: k3s
+        state: restarted

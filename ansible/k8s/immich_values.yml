@@ -1,0 +1,92 @@
+server:
+  persistence:
+    existing-uploads:
+      enabled: true
+      existingClaim: previous-immich-uploads-pvc
+      readOnly: true
+
+    external:
+      enabled: true
+      existingClaim: immich-camera-photos-pvc
+      readOnly: true
+
+  controllers:
+    main:
+      containers:
+        main:
+          image:
+            tag: v2.4.1
+          env:
+            DB_HOSTNAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: host
+            DB_USERNAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: user
+            DB_PASSWORD:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: password
+            DB_DATABASE_NAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: dbname
+valkey:
+  enabled: true
+immich:
+  persistence:
+    library:
+      existingClaim: immich-data-pvc
+machine-learning:
+  enabled: true
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  containerSecurityContext:
+    privileged: true
+  controllers:
+    main:
+      containers:
+        main:
+          image:
+            repository: ghcr.io/immich-app/immich-machine-learning
+            tag: v2.4.1-openvino
+            pullPolicy: IfNotPresent
+          env:
+            LOG_LEVEL: debug
+            NEOReadDebugKeys: 1
+            OverrideGpuAddressSpace: 48
+            TRANSFORMERS_CACHE: /cache
+            HF_XET_CACHE: /cache/huggingface-xet
+            MPLCONFIGDIR: /cache/matplotlib-config
+  persistence:
+    dev-dri:
+      enabled: true
+      type: hostPath
+      hostPath: /dev/dri
+      globalMounts:
+        - path: /dev/dri
+    dev-bus-usb:
+      enabled: true
+      type: hostPath
+      hostPath: /dev/bus/usb
+      globalMounts:
+        - path: /dev/bus/usb
+    sys-class-drm:
+      enabled: true
+      type: hostPath
+      hostPath: /sys/class/drm
+      globalMounts:
+        - path: /sys/class/drm
+    cache:
+      enabled: true
+      type: persistentVolumeClaim
+      existingClaim: immich-ml-pvc
+      globalMounts:
+        - path: /cache

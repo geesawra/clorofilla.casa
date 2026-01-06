@@ -1,0 +1,5 @@
+nas_ip: 192.168.1.155
+nas_path: /mnt/fast/1tb/services
+ansible_port: 22
+k3s_version_num: v1.35.0+k3s1
+api_endpoint_str: "{{ hostvars[groups['server'][0]]['ansible_host'] | default(groups['server'][0]) }}"

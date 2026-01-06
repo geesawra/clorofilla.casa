@@ -1,0 +1,168 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: immich
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+    namespace: immich
+    name: immich-database
+spec:
+    instances: 1
+    storage:
+        size: 1Gi
+    imageName: ghcr.io/tensorchord/cloudnative-vectorchord:16.9-0.4.3
+    postgresql:
+        shared_preload_libraries:
+            - "vchord.so"
+    bootstrap:
+        initdb:
+            # TODO: Use managed extensions (pg 18)
+            postInitApplicationSQL:
+                # Commands based on: https://immich.app/docs/administration/postgres-standalone/#without-superuser-permission
+                - CREATE EXTENSION vchord CASCADE;
+                - CREATE EXTENSION earthdistance CASCADE;
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+    name: immich-data
+    namespace: immich
+spec:
+    storageClassName: standard
+    capacity:
+        storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    nfs:
+        server: 192.168.1.155
+        path: /mnt/fast/1tb/photos/ImmichData
+        mountOptions:
+            - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+    name: immich-camera-photos
+    namespace: immich
+spec:
+    storageClassName: standard
+    capacity:
+        storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    nfs:
+        server: 192.168.1.155
+        path: /mnt/fast/1tb/photos/CameraPhotos
+        mountOptions:
+            - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+    name: previous-immich-uploads
+    namespace: immich
+spec:
+    storageClassName: standard
+    capacity:
+        storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    nfs:
+        server: 192.168.1.155
+        path: /mnt/fast/1tb/photos/PreviousImmichUploads
+        mountOptions:
+            - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+    name: immich-ml
+    namespace: immich
+spec:
+    storageClassName: standard
+    capacity:
+        storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    nfs:
+        server: 192.168.1.155
+        path: /mnt/fast/1tb/photos/ImmichMl
+        mountOptions:
+            - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: immich-data-pvc
+    namespace: immich
+spec:
+    resources:
+        requests:
+            storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    storageClassName: standard
+    volumeName: immich-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: immich-camera-photos-pvc
+    namespace: immich
+spec:
+    resources:
+        requests:
+            storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    storageClassName: standard
+    volumeName: immich-camera-photos
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: previous-immich-uploads-pvc
+    namespace: immich
+spec:
+    resources:
+        requests:
+            storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    storageClassName: standard
+    volumeName: previous-immich-uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: immich-ml-pvc
+    namespace: immich
+spec:
+    resources:
+        requests:
+            storage: 1Gi
+    accessModes:
+        - ReadWriteOnce
+    storageClassName: standard
+    volumeName: immich-ml
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+    name: immich-route
+    namespace: immich
+spec:
+    entryPoints:
+        - websecure
+    routes:
+        - kind: Rule
+          match: Host(`photos.clorofilla.casa`)
+          priority: 10
+          services:
+              - name: immich-server
+                port: 2283
+    tls:
+        certResolver: default
