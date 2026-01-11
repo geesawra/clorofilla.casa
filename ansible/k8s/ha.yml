@@ -92,6 +92,14 @@ spec:
             - mountPath: /tmp/http-config
               name: http-config
       containers:
+        - name: matter-server
+          image: ghcr.io/matter-js/python-matter-server:stable
+          securityContext:
+            privileged: true
+            volumeMounts:
+              - mountPath: /data
+                name: home-assistant-config
+                subDir: matter-server
         - name: home-assistant
           image: "ghcr.io/home-assistant/home-assistant:stable"
           securityContext:
