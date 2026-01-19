@@ -1,0 +1,119 @@
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: transmission-others-deployment
+  namespace: torrents
+  labels:
+    app: transmission-others
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transmission-others
+  template:
+    metadata:
+      name: transmission-pod
+      namespace: torrents
+      labels:
+        app: transmission-others
+    spec:
+      containers:
+        - name: transmission-container
+          image: ghcr.io/linuxserver/transmission
+          ports:
+            - containerPort: 9091
+              protocol: TCP
+            - containerPort: 51413
+              protocol: TCP
+            - containerPort: 51413
+              protocol: UDP
+
+          volumeMounts:
+            - mountPath: /downloads
+              name: files
+            - mountPath: /config
+              name: config
+
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "Europe/Rome"
+
+      volumes:
+        - name: config
+          nfs:
+            server: 192.168.1.155
+            path: /mnt/torrents/data/others/config
+            mountOptions:
+              - nfsvers=3
+
+        - name: files
+          nfs:
+            server: 192.168.1.155
+            path: /mnt/torrents/data/others/files
+            mountOptions:
+              - nfsvers=3
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: transmission-others-service
+  namespace: torrents
+spec:
+  type: NodePort
+  selector:
+    app: transmission-others
+  ports:
+    - protocol: TCP
+      name: web-interface
+      port: 9091
+      targetPort: 9091
+    - protocol: TCP
+      name: torrent-tcp
+      port: 51413
+      targetPort: 51413
+    - protocol: UDP
+      name: torrents-udp
+      port: 51413
+      targetPort: 51413
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: transmission-others-route
+  namespace: torrents
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`transmission-others.clorofilla.casa`)
+      priority: 10
+      services:
+        - name: transmission-others-service
+          port: 9091
+  tls:
+    certResolver: default
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: transmission-peer-lb-others
+  namespace: torrents
+spec:
+  type: LoadBalancer
+  selector:
+    app: transmission-others
+  ports:
+    - protocol: TCP
+      name: peer-tcp
+      port: 51413
+      targetPort: 51413
+    - protocol: UDP
+      name: peer-udp
+      port: 51413
+      targetPort: 51413

@@ -35,6 +35,12 @@
         state: present
         src: k8s/transmission.yml
 
+    - name: Deploy Transmission for other's torrents
+      tags: transmission-others,transmission
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/transmission_others.yml
+
     - name: Deploy postgres operator
       tags: postgres
       kubernetes.core.k8s:
