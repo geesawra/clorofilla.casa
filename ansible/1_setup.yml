@@ -98,6 +98,39 @@
         state: present
         src: k8s/traefik_porkbun.yml
 
+- name: Setup PowerTop
+  hosts: all
+  tags: powertop
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Install the latest version of Powertop
+      ansible.builtin.dnf:
+        name: powertop
+        state: latest
+
+    - name: Write systemd unit
+      copy:
+        dest: /etc/systemd/system/powertop.service
+        content: |
+          [Unit]
+          Description=Powertop tunings
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/sbin/powertop --auto-tune
+          ExecStartPost=/bin/bash -c "for f in $(find /sys/bus/usb/drivers/usbhid -regex '.*\\/[0-9:.-]+' -printf '%%f\\n' | cut -d ':' -f 1 | sort -u); do echo on >| \"/sys/bus/usb/devices/$f/power/control\"; done"
+
+          [Install]
+          WantedBy=multi-user.target sleep.target
+
+    - name: Systemctl daemon-reload
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: true
+        name: powertop
+
 - name: Harden Log Rotation for K3s and Systemd
   hosts: all
   become: true
