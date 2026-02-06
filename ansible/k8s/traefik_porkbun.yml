@@ -5,64 +5,29 @@ metadata:
     namespace: kube-system
 spec:
     valuesContent: |-
-        entryPoints:
-          web:
-            address: :80
-            http:
-              redirections:
-                entryPoint:
-                  to: websecure
-                  scheme: https
-          ports:
-            web:
-              redirectTo:
-                port: websecure
-                priority: 10
-            websecure:
-              tls:
-                enabled: true
-            torrent-tcp:
-              port: 51413
-              expose: true
-              exposedPort: 51413
-              protocol: TCP
-            torrent-udp:
-              port: 51413
-              expose: true
-              exposedPort: 51413
-              protocol: UDP
-          additionalArguments:
-            - "--certificatesresolvers.default.acme.email=hello@geesawra.industries"
-            - "--certificatesresolvers.default.acme.storage=/data/acme.json"
-            - "--certificatesresolvers.default.acme.dnschallenge=true"
-            - "--certificatesresolvers.default.acme.dnschallenge.provider=porkbun"
-            - "--certificatesresolvers.default.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
-          env:
-            - name: PORKBUN_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: porkbun-api-credentials
-                  key: api-key
-            - name: PORKBUN_SECRET_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: porkbun-api-credentials
-                  key: secret-api-key
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-    name: traefik-config
-    namespace: kube-system
-data:
-    traefik.yaml: |
-        entryPoints:
-          web:
-            address: ":80"
-            http:
-              redirections:
-                entryPoint:
-                  to: websecure
-                  scheme: https
-          websecure:
-            address: ":443"
+        ports:
+          torrent-tcp:
+            port: 51413
+            exposedPort: 51413
+            protocol: TCP
+          torrent-udp:
+            port: 51413
+            exposedPort: 51413
+            protocol: UDP
+        additionalArguments:
+          - "--certificatesresolvers.default.acme.email=hello@geesawra.industries"
+          - "--certificatesresolvers.default.acme.storage=/data/acme.json"
+          - "--certificatesresolvers.default.acme.dnschallenge=true"
+          - "--certificatesresolvers.default.acme.dnschallenge.provider=porkbun"
+          - "--certificatesresolvers.default.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+        env:
+          - name: PORKBUN_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: porkbun-api-credentials
+                key: api-key
+          - name: PORKBUN_SECRET_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: porkbun-api-credentials
+                key: secret-api-key
