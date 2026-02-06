@@ -4,60 +4,66 @@
   become: false
   tags: k8s
   tasks:
-    - name: Add NFS provisioner Helm repo
-      kubernetes.core.helm_repository:
-        name: nfs-subdir-external-provisioner
-        repo_url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+      - name: Add NFS provisioner Helm repo
+        kubernetes.core.helm_repository:
+            name: nfs-subdir-external-provisioner
+            repo_url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
 
-    - name: Deploy NFS provisioner
-      kubernetes.core.helm:
-        name: nfs-provisioner
-        chart_ref: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
-        release_namespace: kube-system
-        create_namespace: true
-        values:
-          nfs:
-            server: "{{ nas_ip }}"
-            path: "{{ nas_path }}"
-          storageClass:
-            name: nfs-client
-            defaultClass: false
+      - name: Deploy NFS provisioner
+        kubernetes.core.helm:
+            name: nfs-provisioner
+            chart_ref: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+            release_namespace: kube-system
+            create_namespace: true
+            values:
+                nfs:
+                    server: "{{ nas_ip }}"
+                    path: "{{ nas_path }}"
+                storageClass:
+                    name: nfs-client
+                    defaultClass: false
 
-    - name: Deploy Home Assistant stable
-      tags: ha
-      kubernetes.core.k8s:
-        state: present
-        src: k8s/ha.yml
+      - name: Deploy Home Assistant stable
+        tags: ha
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/ha.yml
 
-    - name: Deploy Transmission for my torrents
-      tags: transmission
-      kubernetes.core.k8s:
-        state: present
-        src: k8s/transmission.yml
+      - name: Deploy Transmission for my torrents
+        tags: transmission
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/transmission.yml
 
-    - name: Deploy Transmission for other's torrents
-      tags: transmission-others,transmission
-      kubernetes.core.k8s:
-        state: present
-        src: k8s/transmission_others.yml
+      - name: Deploy Transmission for other's torrents
+        tags: transmission-others,transmission
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/transmission_others.yml
 
-    - name: Deploy postgres operator
-      tags: postgres
-      kubernetes.core.k8s:
-        state: present
-        src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
+      - name: Deploy postgres operator
+        tags: postgres
+        kubernetes.core.k8s:
+            state: present
+            src: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
 
-    - name: Deploy Immich dependencies
-      tags: immich
-      kubernetes.core.k8s:
-        state: present
-        src: k8s/immich.yml
+      - name: Deploy Immich dependencies
+        tags: immich
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/immich.yml
 
-    - name: Deploy Immich through Helm
-      tags: immich
-      kubernetes.core.helm:
-        name: immich
-        chart_ref: oci://ghcr.io/immich-app/immich-charts/immich
-        release_namespace: immich
-        values_files:
-          - k8s/immich_values.yml
+      - name: Deploy Immich through Helm
+        tags: immich
+        kubernetes.core.helm:
+            name: immich
+            chart_ref: oci://ghcr.io/immich-app/immich-charts/immich
+            release_namespace: immich
+            values_files:
+                - k8s/immich_values.yml
+
+      - name: Deploy reverse proxied services
+        tags: reverse-proxy
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/reverse-proxy.yml
