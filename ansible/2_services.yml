@@ -62,6 +62,12 @@
             values_files:
                 - k8s/immich_values.yml
 
+      - name: Deploy TRMNL
+        tags: trmnl
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/trmnl.yml
+
       - name: Deploy reverse proxied services
         tags: reverse-proxy
         kubernetes.core.k8s:
