@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-agent-alert-rules
+  namespace: monitoring
+data:
+  alert-rules.yaml: |
+    groups:
+      - name: node-alerts
+        rules:
+          - alert: NodeTemperatureCritical
+            expr: node_hwmon_temp_celsius > 85
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node temperature critical ({{ $labels.instance }})"
+              description: "Hardware temperature is above 85°C on {{ $labels.instance }} (current: {{ $value }}°C)"
+
+          - alert: NodeMemoryHigh
+            expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node memory high ({{ $labels.instance }})"
+              description: "Available memory is below 10% on {{ $labels.instance }} (current: {{ $value | humanizePercentage }})"
+
+          - alert: NodeDiskSpaceLow
+            expr: node_filesystem_avail_bytes / node_filesystem_size_bytes < 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node disk space low ({{ $labels.instance }})"
+              description: "Disk space is below 10% on {{ $labels.instance }} (mountpoint: {{ $labels.mountpoint }})"
+
+          - alert: NodeDiskSpaceCritical
+            expr: node_filesystem_avail_bytes / node_filesystem_size_bytes < 0.05
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node disk space critical ({{ $labels.instance }})"
+              description: "Disk space is below 5% on {{ $labels.instance }} (mountpoint: {{ $labels.mountpoint }})"
+
+          - alert: NodeCPUHighLoad
+            expr: 1 - rate(node_cpu_seconds_total{mode="idle"}[5m]) > 0.9
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node CPU high load ({{ $labels.instance }})"
+              description: "CPU idle time is below 10% on {{ $labels.instance }} (current: {{ $value | humanizePercentage }})"
+
+      - name: kubernetes-alerts
+        rules:
+          - alert: PodCrashLooping
+            expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod crash looping ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.pod }} is crash looping in namespace {{ $labels.namespace }}"
+
+          - alert: PodNotReady
+            expr: kube_pod_status_ready{condition="true"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod not ready ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.pod }} has been not ready for more than 10 minutes"
+
+          - alert: NodeExporterDown
+            expr: up{job="node-exporter"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node exporter down ({{ $labels.instance }})"
+              description: "Node exporter has been down for more than 2 minutes on {{ $labels.instance }}"
+
+          - alert: KubeStateMetricsDown
+            expr: up{job="kube-state-metrics"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kube-state-metrics down"
+              description: "Kube-state-metrics has been down for more than 2 minutes"

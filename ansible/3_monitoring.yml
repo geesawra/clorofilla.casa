@@ -1,0 +1,152 @@
+---
+# ── Docker installation (idempotent) ──
+# Based on https://docs.docker.com/engine/install/rhel/
+
+- name: Install Docker on k3s nodes
+  hosts: k3s_cluster
+  become: true
+  tags: monitoring, docker
+  tasks:
+    - name: Check if Docker is already installed
+      ansible.builtin.command: docker --version
+      register: docker_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Uninstall conflicting Docker packages
+      ansible.builtin.dnf:
+        name:
+          - docker
+          - docker-client
+          - docker-client-latest
+          - docker-common
+          - docker-latest
+          - docker-latest-logrotate
+          - docker-logrotate
+          - docker-engine
+          - docker-selinux
+          - docker-engine-selinux
+          - containerd.io
+        state: absent
+      when: docker_check is failed
+
+    - name: Install prerequisites for Docker repo
+      ansible.builtin.dnf:
+        name:
+          - dnf-plugins-core
+          - device-mapper-persistent-data
+          - lvm2
+          - bash-completion
+        state: present
+      when: docker_check is failed
+
+    - name: Add Docker repository
+      ansible.builtin.command:
+        cmd: dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      when: docker_check is failed
+
+    - name: Install Docker Engine
+      ansible.builtin.dnf:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: docker_check is failed
+
+    - name: Start and enable Docker service
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+      when: docker_check is failed and not ansible_check_mode
+
+    - name: Verify Docker is running
+      ansible.builtin.command: docker version
+      changed_when: false
+      register: docker_version_check
+      when: docker_check is failed
+
+
+# ── Deploy monitoring stack ──
+
+- name: Deploy monitoring stack
+  hosts: localhost
+  become: false
+  tags: monitoring
+  tasks:
+    - name: Create monitoring namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: monitoring
+
+    - name: Stop existing node_exporter container if present
+      ansible.builtin.command: docker stop node_exporter
+      delegate_to: elitedesk-downstairs
+      become: true
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove existing node_exporter container if present
+      ansible.builtin.command: docker rm node_exporter
+      delegate_to: elitedesk-downstairs
+      become: true
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Deploy node_exporter Docker container
+      ansible.builtin.command:
+        cmd: >-
+          docker run -d --name=node_exporter --restart=unless-stopped
+          --net=host --privileged
+          -v /proc:/host/proc:ro -v /sys:/host/sys:ro -v /:/rootfs:ro
+          prom/node-exporter:latest
+          --path.procfs=/host/proc --path.sysfs=/host/sys
+          --path.rootfs=/rootfs
+          --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)
+      delegate_to: elitedesk-downstairs
+      become: true
+      register: node_exporter_deploy
+      changed_when: "'already running' not in node_exporter_deploy.stdout"
+      when: not ansible_check_mode
+
+    - name: Add prometheus-community helm repo
+      kubernetes.core.helm_repository:
+        name: prometheus-community
+        repo_url: https://prometheus-community.github.io/helm-charts
+        binary_path: /usr/bin/helm3
+      when: not ansible_check_mode
+
+    - name: Deploy kube-state-metrics
+      kubernetes.core.helm:
+        name: kube-state-metrics
+        chart_ref: prometheus-community/kube-state-metrics
+        release_namespace: monitoring
+        create_namespace: true
+        values_files:
+          - k8s/monitoring/kube-state-metrics-values.yml
+        binary_path: /usr/bin/helm3
+      when: not ansible_check_mode
+
+    - name: Render Prometheus agent config
+      ansible.builtin.template:
+        src: k8s/monitoring/prometheus-agent.yml.j2
+        dest: /tmp/prometheus-agent-rendered.yml
+      delegate_to: localhost
+      when: not ansible_check_mode
+
+    - name: Deploy Prometheus agent
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/prometheus-agent-rendered.yml
+      when: not ansible_check_mode
+
+

@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-agent-config
+  namespace: monitoring
+data:
+  agent-config.yaml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: node-exporter
+        static_configs:
+          - targets: ['localhost:9100']
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
+      - job_name: k3s-kubelet
+        static_configs:
+          - targets: ['localhost:10255']
+        metric_relabel_configs:
+          - action: drop
+            source_labels: [__name__]
+            regex: 'container_(cpu|memory|network|fs|pids)_.*'
+    remote_write:
+      - url: "{{ grafanacloud_prometheus_url }}"
+        basic_auth:
+          username: "{{ grafanacloud_prometheus_username }}"
+          password: "{{ grafanacloud_prometheus_password }}"
+        remote_timeout: 30s
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: prometheus-agent
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: prometheus-agent
+  template:
+    metadata:
+      labels:
+        app: prometheus-agent
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: prometheus-agent
+          image: prom/prometheus:latest
+          args:
+            - '--agent'
+            - '--config.file=/etc/agent-config/agent-config.yaml'
+            - '--web.listen-address=:9600'
+          ports:
+            - containerPort: 9600
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agent-config
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-agent-config

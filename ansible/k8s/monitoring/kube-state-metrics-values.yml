@@ -1,0 +1,4 @@
+replicas: 1
+service:
+  type: ClusterIP
+  port: 8080
