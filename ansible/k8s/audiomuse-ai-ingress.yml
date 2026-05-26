@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: audiomuse-route
+  namespace: navidrome
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`audiomuse.clorofilla.casa`)
+      priority: 10
+      services:
+        - name: audiomuse-audiomuse-ai-flask-service
+          port: 8000
+  tls:
+    certResolver: default

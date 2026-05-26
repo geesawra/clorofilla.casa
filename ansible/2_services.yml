@@ -68,6 +68,41 @@
             state: present
             src: k8s/trmnl.yml
 
+      - name: Deploy Navidrome
+        tags: navidrome
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/navidrome.yml
+
+      - name: Deploy AudioMuse-AI database
+        tags: navidrome,audiomuse
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/audiomuse-database.yml
+
+      - name: Deploy AudioMuse-AI ingress
+        tags: navidrome,audiomuse
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/audiomuse-ai-ingress.yml
+
+      - name: Add AudioMuse-AI Helm repo
+        tags: navidrome,audiomuse
+        kubernetes.core.helm_repository:
+            name: audiomuse-ai
+            repo_url: https://NeptuneHub.github.io/AudioMuse-AI-helm
+            binary_path: /usr/bin/helm3
+
+      - name: Deploy AudioMuse-AI
+        tags: navidrome,audiomuse
+        kubernetes.core.helm:
+            name: audiomuse
+            chart_ref: audiomuse-ai/audiomuse-ai
+            release_namespace: navidrome
+            binary_path: /usr/bin/helm3
+            values_files:
+                - k8s/audiomuse-ai-values.yml
+
       - name: Deploy reverse proxied services
         tags: reverse-proxy
         kubernetes.core.k8s:

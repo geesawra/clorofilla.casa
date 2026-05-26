@@ -1,0 +1,32 @@
+# AudioMuse-AI Helm values — installs in the navidrome namespace
+# Uses existing CNPG database + Navidrome already running there
+
+timezone: "Europe/Rome"
+
+image:
+  repository: ghcr.io/neptunehub/audiomuse-ai
+  pullPolicy: Always
+  # tag: "latest"  # pin to a version if needed e.g. "1.1.3"
+
+# Use external CNPG database instead of bundled postgres
+postgres:
+  enabled: false
+  external:
+    host: "audiomuse-database-rw"
+    port: 5432
+  existingSecret: "audiomuse-database-app"
+  existingSecretKeys:
+    user: "username"
+    password: "password"
+    db: "dbname"
+
+flask:
+  service:
+    type: ClusterIP
+
+worker:
+  replicaCount: 1
+
+# No ingress through Helm — we'll use a Traefik IngressRoute like everything else
+ingress:
+  enabled: false
