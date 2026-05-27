@@ -23,29 +23,29 @@
                     name: nfs-client
                     defaultClass: false
 
-      - name: Mount Transmission config share on host
+      - name: Mount services share from NAS on host
         tags: jackett
         ansible.builtin.mount:
-          path: /mnt/nfs
-          src: "{{ nas_ip }}:/mnt/torrents/data/mine"
+          path: /mnt/nfs/jackett
+          src: "{{ nas_ip }}:/mnt/fast/1tb/services"
           fstype: nfs
           opts: vers=3,soft,timeo=300,retrans=3
           state: mounted
         delegate_to: elitedesk-downstairs
         become: yes
 
-      - name: Create Transmission watch dir on NAS
+      - name: Create Jackett config dir on NAS
         tags: jackett
         ansible.builtin.file:
-          path: /mnt/nfs/config/watch
+          path: /mnt/nfs/jackett/config
           state: directory
         delegate_to: elitedesk-downstairs
         become: yes
 
-      - name: Unmount NFS share from host
+      - name: Unmount services share from host
         tags: jackett
         ansible.builtin.mount:
-          path: /mnt/nfs
+          path: /mnt/nfs/jackett
           state: absent
         delegate_to: elitedesk-downstairs
         become: yes
