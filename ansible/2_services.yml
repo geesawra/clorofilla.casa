@@ -23,6 +23,36 @@
                     name: nfs-client
                     defaultClass: false
 
+      - name: Mount NFS parent share from NAS on host
+        tags: jackett
+        ansible.builtin.mount:
+          path: /mnt/nfs/jackett
+          src: "{{ nas_ip }}:/mnt/fast/1tb/services"
+          fstype: nfs
+          opts: vers=3,soft,timeo=300,retrans=3
+          state: mounted
+        delegate_to: elitedesk-downstairs
+        become: yes
+
+      - name: Create Jackett directories via host mount
+        tags: jackett
+        ansible.builtin.file:
+          path: /mnt/nfs/jackett/{{ item }}
+          state: directory
+        loop:
+          - config
+          - downloads
+        delegate_to: elitedesk-downstairs
+        become: yes
+
+      - name: Unmount NFS parent share from host
+        tags: jackett
+        ansible.builtin.mount:
+          path: /mnt/nfs/jackett
+          state: absent
+        delegate_to: elitedesk-downstairs
+        become: yes
+
       - name: Deploy Jackett
         tags: jackett
         kubernetes.core.k8s:
