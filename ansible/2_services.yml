@@ -23,6 +23,12 @@
                     name: nfs-client
                     defaultClass: false
 
+      - name: Deploy Jackett
+        tags: jackett
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/jackett.yml
+
       - name: Deploy Home Assistant stable
         tags: ha
         kubernetes.core.k8s:
