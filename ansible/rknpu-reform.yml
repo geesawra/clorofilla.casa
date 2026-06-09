@@ -1,0 +1,99 @@
+---
+- name: Install RKNPU kernel module (MNT Reform DSI only)
+  hosts: reform
+  tags: rknpu
+  gather_facts: true
+  become: true
+  vars:
+      rknpu_repo: "https://github.com/antonioacg/rknpu-rk3588.git"
+      rknpu_workdir: "/tmp/rknpu-install"
+  tasks:
+      - name: Verify RK3588 SoC
+        ansible.builtin.shell:
+            cmd: grep -q rk3588 /proc/device-tree/compatible
+        changed_when: false
+
+      - name: Detect current DTB
+        ansible.builtin.shell:
+            cmd: readlink -f /boot/dtb
+        register: dtb_path
+        changed_when: false
+
+      - name: Derive DTB name
+        ansible.builtin.set_fact:
+            dtb_file: "{{ dtb_path.stdout }}"
+            dtb_name: "{{ dtb_path.stdout | basename | regex_replace('\\.dtb$', '') }}"
+
+      - name: Validate DTB variant
+        ansible.builtin.assert:
+            that: dtb_name == 'rk3588-mnt-reform2-dsi'
+            fail_msg: >
+                Expected DTB 'rk3588-mnt-reform2-dsi', got '{{ dtb_name }}'.
+                Only the DSI variant is supported for NPU.
+
+      - name: Install build dependencies
+        ansible.builtin.apt:
+            name:
+                - build-essential
+                - dkms
+                - device-tree-compiler
+                - git
+                - patch
+            state: present
+            update_cache: yes
+
+      - name: Backup original DTB
+        ansible.builtin.copy:
+            src: "{{ dtb_file }}"
+            dest: "{{ dtb_file }}.pre-npu"
+            remote_src: true
+            force: false
+            mode: "0644"
+
+      - name: Install pre-compiled NPU DTB
+        ansible.builtin.copy:
+            src: files/rk3588-mnt-reform2-dsi-npu.dtb
+            dest: "{{ dtb_file }}"
+            mode: "0644"
+
+      - name: Check if rknpu DKMS module is already installed
+        ansible.builtin.command:
+            cmd: dkms status rknpu
+        register: dkms_status
+        changed_when: false
+        failed_when: false
+
+      - name: Clone rknpu-rk3588
+        ansible.builtin.git:
+            repo: "{{ rknpu_repo }}"
+            dest: "{{ rknpu_workdir }}/rknpu-rk3588"
+            version: main
+            recursive: yes
+            depth: 1
+        when: dkms_status is failed
+
+      - name: Run DKMS install
+        ansible.builtin.command:
+            cmd: ./scripts/install-dkms.sh
+            chdir: "{{ rknpu_workdir }}/rknpu-rk3588"
+        when: dkms_status is failed
+
+      - name: Increase CMA pool for NPU
+        ansible.builtin.shell:
+            cmd: |
+                grep -q 'cma=512M' /boot/extlinux/extlinux.conf \
+                    && echo "cma=512M already set" \
+                    || sed -i 's/^append\(.*\)/append\1 cma=512M/' /boot/extlinux/extlinux.conf
+        changed_when: false
+
+      - name: Enable auto-load
+        ansible.builtin.copy:
+            content: "rknpu\n"
+            dest: /etc/modules-load.d/rknpu.conf
+            mode: "0644"
+
+      - name: Load module now (won't bind until reboot with new DTB)
+        ansible.builtin.command:
+            cmd: modprobe rknpu
+        ignore_errors: yes
+        changed_when: false

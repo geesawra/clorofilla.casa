@@ -1,133 +1,135 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: navidrome
+    name: navidrome
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: navidrome-data
-  namespace: navidrome
+    name: navidrome-data
+    namespace: navidrome
 spec:
-  storageClassName: nfs-client
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 1Gi
+    storageClassName: nfs-client
+    accessModes:
+        - ReadWriteMany
+    resources:
+        requests:
+            storage: 1Gi
 ---
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: navidrome-deployment
-  namespace: navidrome
-  labels:
-    app: navidrome
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: navidrome
-  template:
-    metadata:
-      name: navidrome-pod
-      namespace: navidrome
-      labels:
+    name: navidrome-deployment
+    namespace: navidrome
+    labels:
         app: navidrome
-    spec:
-      securityContext:
-        fsGroup: 1000
-      initContainers:
-        - name: install-plugin
-          image: busybox:latest
-          command:
-            - sh
-            - -c
-            - |
-              wget -q -O /data/plugins/audiomuseai.ndp \
-                https://github.com/NeptuneHub/AudioMuse-AI-NV-plugin/releases/download/v8/audiomuseai.ndp
-          volumeMounts:
-            - mountPath: /data
-              name: data
-      containers:
-        - name: navidrome-container
-          image: deluan/navidrome:latest
-          ports:
-            - containerPort: 4533
-              protocol: TCP
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: navidrome
+    template:
+        metadata:
+            name: navidrome-pod
+            namespace: navidrome
+            labels:
+                app: navidrome
+        spec:
+            nodeSelector:
+                kubernetes.io/hostname: reform
+            securityContext:
+                fsGroup: 1000
+            initContainers:
+                - name: install-plugin
+                  image: busybox:latest
+                  command:
+                      - sh
+                      - -c
+                      - |
+                          wget -q -O /data/plugins/audiomuseai.ndp \
+                            https://github.com/NeptuneHub/AudioMuse-AI-NV-plugin/releases/download/v8/audiomuseai.ndp
+                  volumeMounts:
+                      - mountPath: /data
+                        name: data
+            containers:
+                - name: navidrome-container
+                  image: deluan/navidrome:latest
+                  ports:
+                      - containerPort: 4533
+                        protocol: TCP
 
-          volumeMounts:
-            - mountPath: /data
-              name: data
-            - mountPath: /music/old
-              name: music-old
-              readOnly: true
-            - mountPath: /music/mine
-              name: music-mine
-              readOnly: true
+                  volumeMounts:
+                      - mountPath: /data
+                        name: data
+                      - mountPath: /music/old
+                        name: music-old
+                        readOnly: true
+                      - mountPath: /music/mine
+                        name: music-mine
+                        readOnly: true
 
-          env:
-            - name: ND_LOGLEVEL
-              value: info
-            - name: ND_ENABLETRANSCODINGCONFIG
-              value: "true"
-            - name: ND_BASEURL
-              value: https://navidrome.clorofilla.casa
-            - name: ND_ENABLESHARING
-              value: "true"
-            - name: ND_PLUGINS_ENABLED
-              value: "true"
-            - name: ND_PLUGINS_AUTORELOAD
-              value: "true"
-            - name: ND_AGENTS
-              value: "audiomuseai,lastfm,spotify,deezer"
+                  env:
+                      - name: ND_LOGLEVEL
+                        value: info
+                      - name: ND_ENABLETRANSCODINGCONFIG
+                        value: "true"
+                      - name: ND_BASEURL
+                        value: https://navidrome.clorofilla.casa
+                      - name: ND_ENABLESHARING
+                        value: "true"
+                      - name: ND_PLUGINS_ENABLED
+                        value: "true"
+                      - name: ND_PLUGINS_AUTORELOAD
+                        value: "true"
+                      - name: ND_AGENTS
+                        value: "audiomuseai,lastfm,spotify,deezer"
 
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: navidrome-data
+            volumes:
+                - name: data
+                  persistentVolumeClaim:
+                      claimName: navidrome-data
 
-        - name: music-old
-          nfs:
-            server: 192.168.1.155
-            path: /mnt/main/data/usb-disk-1/Music
-            readOnly: true
+                - name: music-old
+                  nfs:
+                      server: 192.168.1.155
+                      path: /mnt/main/data/usb-disk-1/Music
+                      readOnly: true
 
-        - name: music-mine
-          nfs:
-            server: 192.168.1.155
-            path: /mnt/torrents/data/mine/files/complete
-            readOnly: true
+                - name: music-mine
+                  nfs:
+                      server: 192.168.1.155
+                      path: /mnt/torrents/data/mine/files/complete
+                      readOnly: true
 ---
 kind: Service
 apiVersion: v1
 metadata:
-  name: navidrome-service
-  namespace: navidrome
+    name: navidrome-service
+    namespace: navidrome
 spec:
-  type: ClusterIP
-  selector:
-    app: navidrome
-  ports:
-    - protocol: TCP
-      name: http
-      port: 4533
-      targetPort: 4533
+    type: ClusterIP
+    selector:
+        app: navidrome
+    ports:
+        - protocol: TCP
+          name: http
+          port: 4533
+          targetPort: 4533
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: navidrome-route
-  namespace: navidrome
+    name: navidrome-route
+    namespace: navidrome
 spec:
-  entryPoints:
-    - websecure
-  routes:
-    - kind: Rule
-      match: Host(`navidrome.clorofilla.casa`)
-      priority: 10
-      services:
-        - name: navidrome-service
-          port: 4533
-  tls:
-    certResolver: default
+    entryPoints:
+        - websecure
+    routes:
+        - kind: Rule
+          match: Host(`navidrome.clorofilla.casa`)
+          priority: 10
+          services:
+              - name: navidrome-service
+                port: 4533
+    tls:
+        certResolver: default

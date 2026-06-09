@@ -26,27 +26,27 @@
       - name: Mount services share from NAS on host
         tags: jackett
         ansible.builtin.mount:
-          path: /mnt/nfs/jackett
-          src: "{{ nas_ip }}:/mnt/fast/1tb/services"
-          fstype: nfs
-          opts: vers=3,soft,timeo=300,retrans=3
-          state: mounted
+            path: /mnt/nfs/jackett
+            src: "{{ nas_ip }}:/mnt/fast/1tb/services"
+            fstype: nfs
+            opts: vers=3,soft,timeo=300,retrans=3
+            state: mounted
         delegate_to: elitedesk-downstairs
         become: yes
 
       - name: Create Jackett config dir on NAS
         tags: jackett
         ansible.builtin.file:
-          path: /mnt/nfs/jackett/config
-          state: directory
+            path: /mnt/nfs/jackett/config
+            state: directory
         delegate_to: elitedesk-downstairs
         become: yes
 
       - name: Unmount services share from host
         tags: jackett
         ansible.builtin.mount:
-          path: /mnt/nfs/jackett
-          state: absent
+            path: /mnt/nfs/jackett
+            state: absent
         delegate_to: elitedesk-downstairs
         become: yes
 
@@ -95,6 +95,11 @@
             values_files:
                 - k8s/immich_values.yml
 
+      - name: Deploy Immich ML server (standalone, on reform)
+        tags: immich
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/immich-ml-server.yml
 
       - name: Deploy Navidrome
         tags: navidrome

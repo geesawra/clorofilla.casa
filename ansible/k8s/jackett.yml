@@ -1,90 +1,92 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: torrents
+    name: torrents
 ---
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: jackett-deployment
-  namespace: torrents
-  labels:
-    app: jackett
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: jackett
-  template:
-    metadata:
-      name: jackett-pod
-      namespace: torrents
-      labels:
+    name: jackett-deployment
+    namespace: torrents
+    labels:
         app: jackett
-    spec:
-      containers:
-        - name: jackett-container
-          image: lscr.io/linuxserver/jackett:latest
-          ports:
-            - containerPort: 9117
-              protocol: TCP
-          volumeMounts:
-            - mountPath: /config
-              name: config
-            - mountPath: /downloads
-              name: downloads
-          env:
-            - name: PUID
-              value: "1000"
-            - name: PGID
-              value: "1000"
-            - name: TZ
-              value: "Europe/Rome"
-            - name: AUTO_UPDATE
-              value: "true"
-      volumes:
-        - name: config
-          nfs:
-            server: 192.168.1.155
-            path: /mnt/fast/1tb/services/jackett/config
-            mountOptions:
-              - nfsvers=3
-        - name: downloads
-          nfs:
-            server: 192.168.1.155
-            path: /mnt/torrents/data/mine/config/watch
-            mountOptions:
-              - nfsvers=3
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: jackett
+    template:
+        metadata:
+            name: jackett-pod
+            namespace: torrents
+            labels:
+                app: jackett
+        spec:
+            nodeSelector:
+                kubernetes.io/hostname: reform
+            containers:
+                - name: jackett-container
+                  image: lscr.io/linuxserver/jackett:latest
+                  ports:
+                      - containerPort: 9117
+                        protocol: TCP
+                  volumeMounts:
+                      - mountPath: /config
+                        name: config
+                      - mountPath: /downloads
+                        name: downloads
+                  env:
+                      - name: PUID
+                        value: "1000"
+                      - name: PGID
+                        value: "1000"
+                      - name: TZ
+                        value: "Europe/Rome"
+                      - name: AUTO_UPDATE
+                        value: "true"
+            volumes:
+                - name: config
+                  nfs:
+                      server: 192.168.1.155
+                      path: /mnt/fast/1tb/services/jackett/config
+                      mountOptions:
+                          - nfsvers=3
+                - name: downloads
+                  nfs:
+                      server: 192.168.1.155
+                      path: /mnt/torrents/data/mine/config/watch
+                      mountOptions:
+                          - nfsvers=3
 ---
 kind: Service
 apiVersion: v1
 metadata:
-  name: jackett-service
-  namespace: torrents
+    name: jackett-service
+    namespace: torrents
 spec:
-  type: ClusterIP
-  selector:
-    app: jackett
-  ports:
-    - protocol: TCP
-      name: http
-      port: 9117
-      targetPort: 9117
+    type: ClusterIP
+    selector:
+        app: jackett
+    ports:
+        - protocol: TCP
+          name: http
+          port: 9117
+          targetPort: 9117
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: jackett-route
-  namespace: torrents
+    name: jackett-route
+    namespace: torrents
 spec:
-  entryPoints:
-    - websecure
-  routes:
-    - kind: Rule
-      match: Host(`jackett.clorofilla.casa`)
-      priority: 10
-      services:
-        - name: jackett-service
-          port: 9117
-  tls:
-    certResolver: default
+    entryPoints:
+        - websecure
+    routes:
+        - kind: Rule
+          match: Host(`jackett.clorofilla.casa`)
+          priority: 10
+          services:
+              - name: jackett-service
+                port: 9117
+    tls:
+        certResolver: default

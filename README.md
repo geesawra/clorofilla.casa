@@ -14,19 +14,55 @@ It's a very basic Ansible-based setup:
 Playbooks will take care of enrolling the system in the Tailscale Tailnet 
 attached to the provided API key.
 
-## How do I deploy this thing
+## Prerequisites
 
-Suppose you have a freshly-built AlmaLinux 10 system, for which you have SSH keys configured,
-you should run playbooks in the order they appear given their filename:
+Install required Ansible Galaxy roles and collections:
 
 ```sh
-TAILSCALE_KEY='tskey-your-API-key-here' ansible-playbook ansible/setup.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+cd ansible
+ansible-galaxy collection install -r collections/requirements.yml
+ansible-galaxy collection install git+https://github.com/k3s-io/k3s-ansible.git
+ansible-galaxy collection install artis3n.tailscale
+ansible-galaxy role install exploide.dnf-automatic
 ```
 
-After that's done, the system from which you're executing the playbooks should have a Kubeconfig file in `~/.kube/config`: you're ready to use K8s:
+You also need:
+- Ansible (tested with 2.14+)
+- `kubectl` — [install guide](https://kubernetes.io/docs/tasks/tools/)
+- `helm` / `helm3` — [install guide](https://helm.sh/docs/intro/install/)
+- Python `kubernetes` library: `pip install kubernetes`
+- Ansible Vault password file at `.vault_password` (or create one)
+- A Tailscale auth key (set as `TAILSCALE_KEY` env var)
+
+## How do I deploy this thing
+
+Suppose you have a freshly-built system (AlmaLinux 10 for the server, Debian for agents),
+for which you have SSH keys configured, run playbooks in order:
 
 ```sh
-ansible-playbook services.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+# 1 — System init, Tailscale, K3s, kernel pinning
+TAILSCALE_KEY='tskey-your-API-key-here' ansible-playbook ansible/1_setup.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+
+# 2 — Services (K8s workloads)
+ansible-playbook ansible/2_services.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+
+# 3 — Monitoring (Docker, node_exporter, Prometheus agent)
+ansible-playbook ansible/3_monitoring.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+```
+
+After `1_setup.yml` completes, your kubeconfig is at `~/.kube/config`:
+
+```sh
+kubectl get nodes
+```
+
+### MNT Reform NPU (optional)
+
+If you have a reform node with the DSI display variant, install the RKNPU kernel module:
+
+```sh
+ansible-playbook ansible/rknpu-reform.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
+# Reboot the reform after this to activate the new device tree
 ```
 
 ## A note on reproducibility

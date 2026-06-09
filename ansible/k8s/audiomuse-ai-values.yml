@@ -3,30 +3,37 @@
 
 timezone: "Europe/Rome"
 
+nodeSelector:
+    node-role.kubernetes.io/control-plane: "true"
+
+tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      effect: NoSchedule
+
 image:
-  repository: ghcr.io/neptunehub/audiomuse-ai
-  pullPolicy: Always
-  # tag: "latest"  # pin to a version if needed e.g. "1.1.3"
+    repository: ghcr.io/neptunehub/audiomuse-ai
+    pullPolicy: Always
+    # tag: "latest"  # pin to a version if needed e.g. "1.1.3"
 
 # Use external CNPG database instead of bundled postgres
 postgres:
-  enabled: false
-  external:
-    host: "audiomuse-database-rw"
-    port: 5432
-  existingSecret: "audiomuse-database-app"
-  existingSecretKeys:
-    user: "username"
-    password: "password"
-    db: "dbname"
+    enabled: false
+    external:
+        host: "audiomuse-database-rw"
+        port: 5432
+    existingSecret: "audiomuse-database-app"
+    existingSecretKeys:
+        user: "username"
+        password: "password"
+        db: "dbname"
 
 flask:
-  service:
-    type: ClusterIP
+    service:
+        type: ClusterIP
 
 worker:
-  replicaCount: 1
+    replicaCount: 1
 
 # No ingress through Helm — we'll use a Traefik IngressRoute like everything else
 ingress:
-  enabled: false
+    enabled: false

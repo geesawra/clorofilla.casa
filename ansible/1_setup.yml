@@ -1,77 +1,107 @@
 ---
 - name: Import global variables (required due to import playbook for K3s)
-  hosts: all
+  hosts: k3s_cluster
   gather_facts: false
   tasks:
-    - name: Import global variables (required due to import playbook for K3s)
-      set_fact:
-        ansible_become_password: "{{ ansible_become_password }}"
-        k3s_version: "{{ k3s_version_num }}"
-        api_endpoint: "{{ api_endpoint_str }}"
-      delegate_to: localhost
-      run_once: true
-      no_log: true
+      - name: Import global variables (required due to import playbook for K3s)
+        set_fact:
+            ansible_become_password: "{{ ansible_become_password }}"
+            k3s_version: "{{ k3s_version_num }}"
+            api_endpoint: "{{ api_endpoint_str }}"
+        delegate_to: localhost
+        run_once: true
+        no_log: true
 
 - name: Initialize system
-  hosts: all
+  hosts: k3s_cluster
   tags: init
   become: true
-  roles:
-    - {
-        role: exploide.dnf-automatic,
-        dnf_automatic_reboot: true,
-        dnf_automatic_reboot_OnCalendar: "04:00",
-      }
   tasks:
-    - name: Stop, disable, and mask firewalld
-      ansible.builtin.systemd:
-        name: firewalld
-        state: stopped
-        enabled: no
-        masked: yes
+      - name: Apply dnf-automatic role (RHEL only)
+        ansible.builtin.include_role:
+            name: exploide.dnf-automatic
+        vars:
+            dnf_automatic_reboot: true
+            dnf_automatic_reboot_OnCalendar: "04:00"
+        when: ansible_facts['os_family'] == "RedHat"
 
-    - name: Set hostname
-      hostname:
-        name: "{{ inventory_hostname | replace('_', '-') }}"
+      - name: Stop, disable, and mask firewalld
+        ansible.builtin.systemd:
+            name: firewalld
+            state: stopped
+            enabled: no
+            masked: yes
+        when: ansible_facts['os_family'] == "RedHat"
 
-    - name: Ensure updated packages
-      ansible.builtin.dnf:
-        name: "*"
-        state: latest
+      - name: Set hostname
+        hostname:
+            name: "{{ inventory_hostname | replace('_', '-') }}"
+
+      - name: Ensure updated packages (RHEL)
+        ansible.builtin.dnf:
+            name: "*"
+            state: latest
+        when: ansible_facts['os_family'] == "RedHat"
+
+      - name: Purge stale Tailscale apt sources and keys (Debian)
+        ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+        loop:
+            - /etc/apt/keyrings/tailscale.gpg
+            - /usr/share/keyrings/tailscale-archive-keyring.gpg
+            - /etc/apt/sources.list.d/tailscale.list
+            - /etc/apt/sources.list.d/tailscale.sources
+        when: ansible_facts['os_family'] == "Debian"
+
+      - name: Ensure updated packages (Debian)
+        ansible.builtin.apt:
+            name: "*"
+            state: latest
+            update_cache: yes
+        when: ansible_facts['os_family'] == "Debian"
+
+      - name: Stop, disable, and mask GDM (Debian — headless node)
+        ansible.builtin.systemd:
+            name: gdm
+            state: stopped
+            enabled: no
+            masked: yes
+        when: ansible_facts['os_family'] == "Debian"
 
 - name: Install Tailscale
-  hosts: all
+  hosts: k3s_cluster
   become: true
 
   roles:
-    - role: artis3n.tailscale.machine
-      vars:
-        tailscale_authkey: "{{ lookup('env', 'TAILSCALE_KEY') }}"
-        tailscale_args: "--ssh"
+      - role: artis3n.tailscale.machine
+        vars:
+            tailscale_authkey: "{{ lookup('env', 'TAILSCALE_KEY') }}"
+            tailscale_args: "--ssh"
 
 - name: Install K3s
   tags: deploy_k3s
   ansible.builtin.import_playbook: k3s.orchestration.site
 
 - name: Copy kubeconfig to current user's home
-  hosts: all
+  hosts: server
   become: false
   tags: k8s,kubeconfig
 
   tasks:
-    - name: Copy K3s kubeconfig
-      ansible.builtin.fetch:
-        src: /etc/rancher/k3s/k3s.yaml
-        dest: ~/.kube/config
-        flat: yes
-      become: yes
+      - name: Copy K3s kubeconfig
+        ansible.builtin.fetch:
+            src: /etc/rancher/k3s/k3s.yaml
+            dest: ~/.kube/config
+            flat: yes
+        become: yes
 
-    - name: Fix server address in kubeconfig
-      ansible.builtin.replace:
-        path: ~/.kube/config
-        regexp: "https://127.0.0.1:6443"
-        replace: "https://{{ ansible_host }}:6443"
-      delegate_to: localhost
+      - name: Fix server address in kubeconfig
+        ansible.builtin.replace:
+            path: ~/.kube/config
+            regexp: "https://127.0.0.1:6443"
+            replace: "https://{{ ansible_host }}:6443"
+        delegate_to: localhost
 
 - name: Setup Traefik with Porkbun certs
   hosts: localhost
@@ -79,102 +109,131 @@
   tags: traefik,k8s
 
   tasks:
-    - name: Create Porkbun API credentials secret
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: porkbun-api-credentials
-            namespace: kube-system
-          type: Opaque
-          stringData:
-            api-key: "{{ porkbun_api_key }}"
-            secret-api-key: "{{ porkbun_api_secret }}"
+      - name: Create Porkbun API credentials secret
+        kubernetes.core.k8s:
+            state: present
+            definition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                    name: porkbun-api-credentials
+                    namespace: kube-system
+                type: Opaque
+                stringData:
+                    api-key: "{{ porkbun_api_key }}"
+                    secret-api-key: "{{ porkbun_api_secret }}"
 
-    - name: Configure traefik to use certificates
-      kubernetes.core.k8s:
-        state: present
-        src: k8s/traefik_porkbun.yml
+      - name: Configure traefik to use certificates
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/traefik_porkbun.yml
 
 - name: Setup PowerTop
-  hosts: all
+  hosts: k3s_cluster
   tags: powertop
   gather_facts: true
   become: true
   tasks:
-    - name: Install the latest version of Powertop
-      ansible.builtin.dnf:
-        name: powertop
-        state: latest
+      - name: Install powertop (RHEL)
+        ansible.builtin.dnf:
+            name: powertop
+            state: latest
+        when: ansible_facts['os_family'] == "RedHat"
 
-    - name: Write systemd unit
-      copy:
-        dest: /etc/systemd/system/powertop.service
-        content: |
-          [Unit]
-          Description=Powertop tunings
+      - name: Install powertop (Debian, x86 only)
+        ansible.builtin.apt:
+            name: powertop
+            state: latest
+            update_cache: yes
+        when: ansible_facts['os_family'] == "Debian" and ansible_facts['architecture'] == "x86_64"
 
-          [Service]
-          Type=oneshot
-          RemainAfterExit=yes
-          ExecStart=/usr/sbin/powertop --auto-tune
-          ExecStartPost=/bin/bash -c "for f in $(find /sys/bus/usb/drivers/usbhid -regex '.*\\/[0-9:.-]+' -printf '%%f\\n' | cut -d ':' -f 1 | sort -u); do echo on >| \"/sys/bus/usb/devices/$f/power/control\"; done"
+      - name: Write systemd unit (x86 only)
+        copy:
+            dest: /etc/systemd/system/powertop.service
+            content: |
+                [Unit]
+                Description=Powertop tunings
 
-          [Install]
-          WantedBy=multi-user.target sleep.target
+                [Service]
+                Type=oneshot
+                RemainAfterExit=yes
+                ExecStart=/usr/sbin/powertop --auto-tune
+                ExecStartPost=/bin/bash -c "for f in $(find /sys/bus/usb/drivers/usbhid -regex '.*\/[0-9:.-]+' -printf '%%f\n' | cut -d ':' -f 1 | sort -u); do echo on >| \"/sys/bus/usb/devices/$f/power/control\"; done"
 
-    - name: Systemctl daemon-reload
-      ansible.builtin.systemd:
-        state: restarted
-        daemon_reload: true
-        name: powertop
+                [Install]
+                WantedBy=multi-user.target sleep.target
+        when: ansible_facts['architecture'] == "x86_64"
+
+      - name: Systemctl daemon-reload (x86 only)
+        ansible.builtin.systemd:
+            state: restarted
+            daemon_reload: true
+            name: powertop
+        when: ansible_facts['architecture'] == "x86_64"
 
 - name: Harden Log Rotation for K3s and Systemd
-  hosts: all
+  hosts: k3s_cluster
   become: true
   tags: k8s,logging
   tasks:
-    - name: Limit journald total disk usage to 500MB
-      ansible.builtin.lineinfile:
-        create: yes
-        path: /etc/systemd/journald.conf
-        regexp: "^#?SystemMaxUse="
-        line: "SystemMaxUse=500M"
-      notify: Restart journald
+      - name: Limit journald total disk usage to 500MB
+        ansible.builtin.lineinfile:
+            create: yes
+            path: /etc/systemd/journald.conf
+            regexp: "^#?SystemMaxUse="
+            line: "SystemMaxUse=500M"
+        notify: Restart journald
 
-    - name: Ensure journald persistent storage is enabled
-      ansible.builtin.lineinfile:
-        create: yes
-        path: /etc/systemd/journald.conf
-        regexp: "^#?Storage="
-        line: "Storage=persistent"
-      notify: Restart journald
+      - name: Ensure journald persistent storage is enabled
+        ansible.builtin.lineinfile:
+            create: yes
+            path: /etc/systemd/journald.conf
+            regexp: "^#?Storage="
+            line: "Storage=persistent"
+        notify: Restart journald
 
-    - name: Ensure K3s config directory exists
-      ansible.builtin.file:
-        path: /etc/rancher/k3s
-        state: directory
-        mode: "0755"
+      - name: Ensure K3s config directory exists
+        ansible.builtin.file:
+            path: /etc/rancher/k3s
+            state: directory
+            mode: "0755"
 
-    - name: Configure K3s log rotation via config.yaml
-      ansible.builtin.blockinfile:
-        path: /etc/rancher/k3s/config.yaml
-        create: yes
-        block: |
-          kubelet-arg:
-            - "container-log-max-files=3"
-            - "container-log-max-size=10Mi"
-      notify: Restart k3s
+      - name: Configure K3s log rotation via config.yaml
+        ansible.builtin.blockinfile:
+            path: /etc/rancher/k3s/config.yaml
+            create: yes
+            block: |
+                kubelet-arg:
+                  - "container-log-max-files=3"
+                  - "container-log-max-size=10Mi"
+        notify: Restart k3s
 
   handlers:
-    - name: Restart journald
-      ansible.builtin.service:
-        name: systemd-journald
-        state: restarted
+      - name: Restart journald
+        ansible.builtin.service:
+            name: systemd-journald
+            state: restarted
 
-    - name: Restart k3s
-      ansible.builtin.service:
-        name: k3s
-        state: restarted
+      - name: Restart k3s
+        ansible.builtin.service:
+            name: "{{ 'k3s-agent' if 'agent' in group_names else 'k3s' }}"
+            state: restarted
+
+- name: Pin kernel packages (reform — required for DKMS modules)
+  hosts: reform
+  tags: pin-kernel
+  gather_facts: true
+  become: true
+  tasks:
+      - name: Discover kernel packages
+        ansible.builtin.shell:
+            cmd: dpkg -l | awk '/linux-(image|headers)-{{ ansible_kernel | regex_replace("\..*", "") }}/ {print $2}'
+        register: kernel_pkgs
+        changed_when: false
+
+      - name: Hold kernel packages
+        ansible.builtin.command:
+            cmd: "apt-mark hold {{ item }}"
+        loop: "{{ kernel_pkgs.stdout_lines }}"
+        when: kernel_pkgs.stdout_lines | length > 0
+        changed_when: false
