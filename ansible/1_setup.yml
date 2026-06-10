@@ -237,3 +237,6 @@
         loop: "{{ kernel_pkgs.stdout_lines }}"
         when: kernel_pkgs.stdout_lines | length > 0
         changed_when: false
+
+- name: Install RKNPU kernel module (MNT Reform DSI only)
+  ansible.builtin.import_playbook: rknpu-reform.yml

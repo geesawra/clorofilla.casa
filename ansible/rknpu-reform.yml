@@ -97,3 +97,9 @@
             cmd: modprobe rknpu
         ignore_errors: yes
         changed_when: false
+
+      - name: Reboot to load new DTB and NPU module
+        ansible.builtin.reboot:
+            reboot_timeout: 600
+            pre_reboot_delay: 10
+            post_reboot_delay: 30
