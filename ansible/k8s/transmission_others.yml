@@ -100,22 +100,3 @@ spec:
                 port: 9091
     tls:
         certResolver: default
----
-kind: Service
-apiVersion: v1
-metadata:
-    name: transmission-peer-lb-others
-    namespace: torrents
-spec:
-    type: LoadBalancer
-    selector:
-        app: transmission-others
-    ports:
-        - protocol: TCP
-          name: peer-tcp
-          port: 51413
-          targetPort: 51413
-        - protocol: UDP
-          name: peer-udp
-          port: 51413
-          targetPort: 51413
