@@ -3,7 +3,9 @@
 This is my first attempt at writing IaC """code""" for my home server.
 
 It's a very basic Ansible-based setup:
-- OS is AlmaLinux 10 for maximum street cred and stability
+- Two nodes:
+  - `elitedesk-downstairs`: an HP EliteDesk 800 G4, OS is AlmaLinux 10 for maximum street cred and stability
+  - `reform`: an MNT Reform powered by a Rockchip RK3588 SoC with 32GB RAM, OS is Debian sid
 - service orchestration is managed by K3s
 - storage is handled by my NAS
 - everything is only accessible either through local IPs or Tailscale

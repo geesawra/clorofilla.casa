@@ -195,15 +195,32 @@
             binary_path: /usr/bin/helm3
         when: not ansible_check_mode
 
-      - name: Render Prometheus agent config
-        ansible.builtin.template:
-            src: k8s/monitoring/prometheus-agent.yml.j2
-            dest: /tmp/prometheus-agent-rendered.yml
-        delegate_to: localhost
+      - name: Remove old prometheus-agent DaemonSet
+        kubernetes.core.k8s:
+            state: absent
+            api_version: apps/v1
+            kind: DaemonSet
+            namespace: monitoring
+            name: prometheus-agent
         when: not ansible_check_mode
 
-      - name: Deploy Prometheus agent
+      - name: Remove old prometheus-agent ConfigMap
+        kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: ConfigMap
+            namespace: monitoring
+            name: prometheus-agent-config
+        when: not ansible_check_mode
+
+      - name: Deploy Prometheus server
         kubernetes.core.k8s:
             state: present
-            src: /tmp/prometheus-agent-rendered.yml
+            src: k8s/monitoring/prometheus.yml
+        when: not ansible_check_mode
+
+      - name: Deploy Grafana
+        kubernetes.core.k8s:
+            state: present
+            src: k8s/monitoring/grafana.yml
         when: not ansible_check_mode

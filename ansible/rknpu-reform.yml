@@ -50,6 +50,23 @@
             force: false
             mode: "0644"
 
+      - name: Check current DTB checksum
+        ansible.builtin.stat:
+            path: "{{ dtb_file }}"
+            checksum_algorithm: sha1
+        register: current_dtb_stat
+
+      - name: Check target NPU DTB checksum
+        ansible.builtin.stat:
+            path: files/rk3588-mnt-reform2-dsi-npu.dtb
+            checksum_algorithm: sha1
+        register: npu_dtb_stat
+        delegate_to: localhost
+
+      - name: Set DTB changed flag
+        ansible.builtin.set_fact:
+            dtb_changed: "{{ current_dtb_stat.stat.checksum != npu_dtb_stat.stat.checksum }}"
+
       - name: Install pre-compiled NPU DTB
         ansible.builtin.copy:
             src: files/rk3588-mnt-reform2-dsi-npu.dtb
@@ -98,8 +115,13 @@
         ignore_errors: yes
         changed_when: false
 
+      - name: Set reboot needed flag
+        ansible.builtin.set_fact:
+            reboot_needed: "{{ dtb_changed or (dkms_status is failed) }}"
+
       - name: Reboot to load new DTB and NPU module
         ansible.builtin.reboot:
             reboot_timeout: 600
             pre_reboot_delay: 10
             post_reboot_delay: 30
+        when: reboot_needed | bool

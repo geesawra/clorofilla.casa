@@ -1,0 +1,147 @@
+---
+# Grafana datasource provisioning
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: grafana-datasources
+    namespace: monitoring
+data:
+    datasources.yaml: |
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            access: proxy
+            url: http://prometheus.monitoring.svc.cluster.local:9090
+            isDefault: true
+            editable: false
+---
+# Grafana dashboard provisioning config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: grafana-dashboards-config
+    namespace: monitoring
+data:
+    dashboards.yaml: |
+        apiVersion: 1
+        providers:
+          - name: default
+            folder: ''
+            type: file
+            disableDeletion: true
+            allowUiUpdates: true
+            options:
+              path: /etc/grafana/provisioning/dashboards
+---
+# Grafana data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: grafana-data
+    namespace: monitoring
+spec:
+    accessModes:
+        - ReadWriteOnce
+    resources:
+        requests:
+            storage: 10Gi
+---
+# Grafana deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: grafana
+    namespace: monitoring
+    labels:
+        app: grafana
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: grafana
+    template:
+        metadata:
+            labels:
+                app: grafana
+        spec:
+            nodeSelector:
+                kubernetes.io/hostname: reform
+            initContainers:
+                - name: download-dashboards
+                  image: curlimages/curl:latest
+                  command: ["sh", "-c"]
+                  args:
+                      - |
+                          for id in 1860 15202 18283 15757 13332; do
+                            echo "Downloading dashboard $id..."
+                            curl -sL "https://grafana.com/api/dashboards/$id/revisions/latest/download" -o "/dashboards/$id.json"
+                          done
+                          echo "Done."
+                  volumeMounts:
+                      - name: dashboards-json
+                        mountPath: /dashboards
+            containers:
+                - name: grafana
+                  image: grafana/grafana:13.0.2
+                  env:
+                      - name: GF_SERVER_ROOT_URL
+                        value: https://grafana.clorofilla.casa
+                  ports:
+                      - containerPort: 3000
+                  volumeMounts:
+                      - name: data
+                        mountPath: /var/lib/grafana
+                      - name: datasources
+                        mountPath: /etc/grafana/provisioning/datasources
+                      - name: dashboards-config
+                        mountPath: /etc/grafana/provisioning/dashboards/default.yaml
+                        subPath: dashboards.yaml
+                      - name: dashboards-json
+                        mountPath: /etc/grafana/provisioning/dashboards
+            volumes:
+                - name: data
+                  persistentVolumeClaim:
+                      claimName: grafana-data
+                - name: datasources
+                  configMap:
+                      name: grafana-datasources
+                - name: dashboards-config
+                  configMap:
+                      name: grafana-dashboards-config
+                - name: dashboards-json
+                  emptyDir: {}
+---
+# Grafana service
+apiVersion: v1
+kind: Service
+metadata:
+    name: grafana
+    namespace: monitoring
+spec:
+    type: ClusterIP
+    selector:
+        app: grafana
+    ports:
+        - name: http
+          port: 3000
+          targetPort: 3000
+---
+# IngressRoute for grafana.clorofilla.casa
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+    name: grafana-route
+    namespace: monitoring
+spec:
+    entryPoints:
+        - websecure
+    routes:
+        - kind: Rule
+          match: Host(`grafana.clorofilla.casa`)
+          priority: 10
+          services:
+              - name: grafana
+                port: 3000
+    tls:
+        certResolver: default

@@ -11,12 +11,18 @@ data:
       - job_name: node-exporter
         static_configs:
           - targets: ['localhost:9100']
+        relabel_configs:
+          - target_label: instance
+            replacement: __NODE_NAME__
       - job_name: kube-state-metrics
         static_configs:
           - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
       - job_name: k3s-kubelet
         static_configs:
           - targets: ['localhost:10255']
+        relabel_configs:
+          - target_label: instance
+            replacement: __NODE_NAME__
         metric_relabel_configs:
           - action: drop
             source_labels: [__name__]
@@ -44,6 +50,22 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+        - name: inject-hostname
+          image: busybox
+          command: ['sh', '-c']
+          args:
+            - 'sed "s/__NODE_NAME__/$NODE_NAME/g" /etc/agent-config-template/agent-config.yaml > /etc/agent-config/agent-config.yaml'
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/agent-config-template
+            - name: config
+              mountPath: /etc/agent-config
       containers:
         - name: prometheus-agent
           image: prom/prometheus:latest
@@ -58,5 +80,7 @@ spec:
               mountPath: /etc/agent-config
       volumes:
         - name: config
+          emptyDir: {}
+        - name: config-template
           configMap:
             name: prometheus-agent-config
