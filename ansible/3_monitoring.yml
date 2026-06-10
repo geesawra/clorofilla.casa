@@ -137,6 +137,12 @@
   become: true
   tags: monitoring
   tasks:
+      - name: Ensure textfile collector directory exists
+        ansible.builtin.file:
+            path: /var/lib/node_exporter/textfile_collector
+            state: directory
+            mode: "0755"
+
       - name: Stop existing node_exporter container if present
         ansible.builtin.command: docker stop node_exporter
         changed_when: false
@@ -155,10 +161,12 @@
                 docker run -d --name=node_exporter --restart=unless-stopped
                 --net=host --privileged
                 -v /proc:/host/proc:ro -v /sys:/host/sys:ro -v /:/rootfs:ro
+                -v /var/lib/node_exporter/textfile_collector:/var/lib/node_exporter/textfile_collector:ro
                 prom/node-exporter:latest
                 --path.procfs=/host/proc --path.sysfs=/host/sys
                 --path.rootfs=/rootfs
                 --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)
+                --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
         register: node_exporter_deploy
         changed_when: "'already running' not in node_exporter_deploy.stdout"
         when: not ansible_check_mode

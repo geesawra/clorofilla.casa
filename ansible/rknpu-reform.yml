@@ -125,3 +125,28 @@
             pre_reboot_delay: 10
             post_reboot_delay: 30
         when: reboot_needed | bool
+
+      - name: Ensure debugfs is mounted
+        ansible.builtin.mount:
+            path: /sys/kernel/debug
+            src: debugfs
+            fstype: debugfs
+            state: mounted
+
+      - name: Deploy NPU metrics script
+        ansible.builtin.copy:
+            src: files/npu-metrics.sh
+            dest: /usr/local/bin/npu-metrics.sh
+            mode: "0755"
+
+      - name: Create NPU metrics cron jobs (every 30s)
+        ansible.builtin.cron:
+            name: "{{ item.name }}"
+            job: "{{ item.job }}"
+            minute: "*"
+        loop:
+            - name: npu-metrics
+              job: /usr/local/bin/npu-metrics.sh
+            - name: npu-metrics-offset
+              job: sleep 30 && /usr/local/bin/npu-metrics.sh
+        when: not ansible_check_mode
