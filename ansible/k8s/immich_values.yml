@@ -3,12 +3,12 @@ server:
         existing-uploads:
             enabled: true
             existingClaim: previous-immich-uploads-pvc
-            readOnly: true
+            globalMounts: [{readOnly: true}]
 
         external:
             enabled: true
             existingClaim: immich-camera-photos-pvc
-            readOnly: true
+            globalMounts: [{readOnly: true}]
 
     controllers:
         main:
