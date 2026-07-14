@@ -15,7 +15,7 @@ server:
             containers:
                 main:
                     image:
-                        tag: v2.4.1
+                        tag: v3.0.2
                     env:
                         DB_HOSTNAME:
                             valueFrom:
@@ -38,7 +38,8 @@ server:
                                     name: immich-database-app
                                     key: dbname
                         IMMICH_MACHINE_LEARNING_URL:
-                            value: http://immich-ml.immich.svc.cluster.local:3003
+                            value: >-
+                                http://immich-ml.immich.svc.cluster.local:3003
 valkey:
     enabled: true
 immich:
@@ -46,4 +47,4 @@ immich:
         library:
             existingClaim: immich-data-pvc
 machine-learning:
-    enabled: false # deployed as standalone pod on reform
+    enabled: false  # deployed as standalone pod on reform

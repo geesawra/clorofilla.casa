@@ -20,7 +20,7 @@ spec:
                 kubernetes.io/hostname: reform
             containers:
                 - name: immich-ml
-                  image: ghcr.io/immich-app/immich-machine-learning:v2.4.1-rknn
+                  image: ghcr.io/immich-app/immich-machine-learning:v3.0.2-rknn
                   securityContext:
                       privileged: true
                   ports:
