@@ -1,50 +1,122 @@
 server:
-    persistence:
-        existing-uploads:
-            enabled: true
-            existingClaim: previous-immich-uploads-pvc
-            globalMounts: [{readOnly: true}]
+  persistence:
+    existing-uploads:
+      enabled: true
+      existingClaim: previous-immich-uploads-pvc
+      globalMounts: [{ readOnly: true }]
 
-        external:
-            enabled: true
-            existingClaim: immich-camera-photos-pvc
-            globalMounts: [{readOnly: true}]
+    external:
+      enabled: true
+      existingClaim: immich-camera-photos-pvc
+      globalMounts: [{ readOnly: true }]
 
-    controllers:
+    dev-dri-card1:
+      type: hostPath
+      hostPath: /dev/dri/card1
+      hostPathType: CharDevice
+      globalMounts:
+        - path: /dev/dri/card1
+
+    dev-dri-render129:
+      type: hostPath
+      hostPath: /dev/dri/renderD129
+      hostPathType: CharDevice
+      globalMounts:
+        - path: /dev/dri/renderD129
+
+  controllers:
+    main:
+      pod:
+        nodeSelector:
+          kubernetes.io/hostname: bfg
+        securityContext:
+          supplementalGroups:
+            - 39
+            - 105
+      containers:
         main:
-            containers:
-                main:
-                    image:
-                        tag: v3.0.2
-                    env:
-                        DB_HOSTNAME:
-                            valueFrom:
-                                secretKeyRef:
-                                    name: immich-database-app
-                                    key: host
-                        DB_USERNAME:
-                            valueFrom:
-                                secretKeyRef:
-                                    name: immich-database-app
-                                    key: user
-                        DB_PASSWORD:
-                            valueFrom:
-                                secretKeyRef:
-                                    name: immich-database-app
-                                    key: password
-                        DB_DATABASE_NAME:
-                            valueFrom:
-                                secretKeyRef:
-                                    name: immich-database-app
-                                    key: dbname
-                        IMMICH_MACHINE_LEARNING_URL:
-                            value: >-
-                                http://immich-ml.immich.svc.cluster.local:3003
+          image:
+            tag: v3.0.2
+          env:
+            DB_HOSTNAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: host
+            DB_USERNAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: user
+            DB_PASSWORD:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: password
+            DB_DATABASE_NAME:
+              valueFrom:
+                secretKeyRef:
+                  name: immich-database-app
+                  key: dbname
+            IMMICH_MACHINE_LEARNING_URL:
+              value: http://immich-machine-learning:3003
 valkey:
-    enabled: true
+  enabled: true
 immich:
-    persistence:
-        library:
-            existingClaim: immich-data-pvc
+  configuration:
+    ffmpeg:
+      accel: vaapi
+      accelDecode: true
+  persistence:
+    library:
+      existingClaim: immich-data-pvc
 machine-learning:
-    enabled: false  # deployed as standalone pod on reform
+  enabled: true
+  controllers:
+    main:
+      pod:
+        nodeSelector:
+          kubernetes.io/hostname: bfg
+        securityContext:
+          supplementalGroups:
+            - 39
+            - 105
+      containers:
+        main:
+          image:
+            repository: ghcr.io/immich-app/immich-machine-learning
+            tag: v3.0.2-rocm
+          env:
+            TRANSFORMERS_CACHE: /cache
+            HF_XET_CACHE: /cache/huggingface-xet
+            MPLCONFIGDIR: /cache/matplotlib-config
+            # ROCr ordinal 0 was validated with only Raphael's device nodes
+            # mounted; do not reuse this value with a different device mapping.
+            ROCR_VISIBLE_DEVICES: "0"
+            HSA_OVERRIDE_GFX_VERSION: "10.3.0"
+            HSA_USE_SVM: "0"
+  persistence:
+    cache:
+      enabled: true
+      type: persistentVolumeClaim
+      size: 10Gi
+      accessMode: ReadWriteMany
+      storageClass: nfs-client
+    dev-kfd:
+      type: hostPath
+      hostPath: /dev/kfd
+      hostPathType: CharDevice
+      globalMounts:
+        - path: /dev/kfd
+    dev-dri-card1:
+      type: hostPath
+      hostPath: /dev/dri/card1
+      hostPathType: CharDevice
+      globalMounts:
+        - path: /dev/dri/card1
+    dev-dri-render129:
+      type: hostPath
+      hostPath: /dev/dri/renderD129
+      hostPathType: CharDevice
+      globalMounts:
+        - path: /dev/dri/renderD129

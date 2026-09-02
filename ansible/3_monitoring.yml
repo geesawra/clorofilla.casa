@@ -1,50 +1,40 @@
 ---
-# ── Docker installation (idempotent) ──
-
-- name: Install Docker on k3s nodes
+# Docker is used here only for the existing node_exporter container.
+# Immich ML is deployed by the Immich Helm chart in 2_services.yml.
+- name: Install and enable Docker for node_exporter
   hosts: k3s_cluster
   become: true
-  tags: monitoring, docker
+  tags: monitoring,docker
   tasks:
-      - name: Check if Docker is already installed
-        ansible.builtin.shell:
-            cmd: which docker
-        register: docker_check
+      - name: Check whether Docker is installed
+        ansible.builtin.command: docker --version
+        register: docker_version
         changed_when: false
         failed_when: false
 
-      # ── RHEL (AlmaLinux) install path ──
-      - name: Install Docker on RHEL
-        when: docker_check.rc != 0 and ansible_facts['os_family'] == "RedHat"
-        block:
-            - name: Uninstall conflicting Docker packages
-              ansible.builtin.dnf:
-                  name:
-                      - docker
-                      - docker-client
-                      - docker-client-latest
-                      - docker-common
-                      - docker-latest
-                      - docker-latest-logrotate
-                      - docker-logrotate
-                      - docker-engine
-                      - docker-selinux
-                      - docker-engine-selinux
-                      - containerd.io
-                  state: absent
+      - name: Assert the node is the supported Fedora host
+        ansible.builtin.assert:
+            that:
+                - ansible_facts['distribution'] == "Fedora"
+            fail_msg: >-
+                Docker provisioning in this repository supports Fedora bfg only;
+                do not use a different distribution repository without updating this playbook.
 
-            - name: Install prerequisites for Docker repo
+      - name: Install Docker on Fedora
+        when: docker_version.rc != 0
+        block:
+            - name: Install Docker repository prerequisites
               ansible.builtin.dnf:
                   name:
+                      - ca-certificates
                       - dnf-plugins-core
-                      - device-mapper-persistent-data
-                      - lvm2
-                      - bash-completion
                   state: present
 
-            - name: Add Docker repository
-              ansible.builtin.command:
-                  cmd: dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            - name: Configure Docker repository
+              ansible.builtin.get_url:
+                  url: https://download.docker.com/linux/fedora/docker-ce.repo
+                  dest: /etc/yum.repos.d/docker-ce.repo
+                  mode: "0644"
 
             - name: Install Docker Engine
               ansible.builtin.dnf:
@@ -56,81 +46,17 @@
                       - docker-compose-plugin
                   state: present
 
-            - name: Start and enable Docker service
-              ansible.builtin.systemd:
-                  name: docker
-                  state: started
-                  enabled: yes
-              when: not ansible_check_mode
+      - name: Start and enable Docker
+        ansible.builtin.systemd:
+            name: docker
+            state: started
+            enabled: true
+        when: not ansible_check_mode
 
-      # ── Debian install path (e.g. MNT Reform) ──
-      - name: Install Docker on Debian
-        when: docker_check.rc != 0 and ansible_facts['os_family'] == "Debian"
-        block:
-            - name: Uninstall conflicting Docker packages (Debian)
-              ansible.builtin.apt:
-                  name:
-                      - docker.io
-                      - docker-compose
-                      - docker-doc
-                      - podman-docker
-                      - containerd
-                      - runc
-                  state: absent
-
-            - name: Install prerequisites for Docker repo (Debian)
-              ansible.builtin.apt:
-                  name:
-                      - ca-certificates
-                      - curl
-                  state: present
-
-            - name: Create keyrings directory
-              ansible.builtin.file:
-                  path: /etc/apt/keyrings
-                  state: directory
-                  mode: "0755"
-
-            - name: Download Docker GPG key (Debian)
-              ansible.builtin.get_url:
-                  url: https://download.docker.com/linux/debian/gpg
-                  dest: /etc/apt/keyrings/docker.asc
-                  mode: "0644"
-
-            - name: Add Docker repository (Debian)
-              ansible.builtin.apt_repository:
-                  repo: >-
-                      deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc]
-                      https://download.docker.com/linux/debian
-                      {{ 'bookworm' if ansible_facts['distribution_release'] == 'forky' else ansible_facts['distribution_release'] }}
-                      stable
-                  state: present
-
-            - name: Install Docker Engine (Debian)
-              ansible.builtin.apt:
-                  name:
-                      - docker-ce
-                      - docker-ce-cli
-                      - containerd.io
-                      - docker-buildx-plugin
-                      - docker-compose-plugin
-                  state: present
-                  update_cache: yes
-
-            - name: Start and enable Docker service
-              ansible.builtin.systemd:
-                  name: docker
-                  state: started
-                  enabled: yes
-              when: not ansible_check_mode
-
-      - name: Verify Docker is running
+      - name: Verify Docker is available
         ansible.builtin.command: docker version
         changed_when: false
-        register: docker_version_check
-        when: docker_check.rc != 0
-
-# ── Deploy monitoring stack ──
+        when: not ansible_check_mode
 
 - name: Deploy node_exporter on all k3s cluster nodes
   hosts: k3s_cluster
@@ -201,24 +127,6 @@
             values_files:
                 - k8s/monitoring/kube-state-metrics-values.yml
             binary_path: /usr/bin/helm3
-        when: not ansible_check_mode
-
-      - name: Remove old prometheus-agent DaemonSet
-        kubernetes.core.k8s:
-            state: absent
-            api_version: apps/v1
-            kind: DaemonSet
-            namespace: monitoring
-            name: prometheus-agent
-        when: not ansible_check_mode
-
-      - name: Remove old prometheus-agent ConfigMap
-        kubernetes.core.k8s:
-            state: absent
-            api_version: v1
-            kind: ConfigMap
-            namespace: monitoring
-            name: prometheus-agent-config
         when: not ansible_check_mode
 
       - name: Deploy Prometheus server

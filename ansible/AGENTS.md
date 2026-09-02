@@ -11,22 +11,22 @@ are followed.
 ```
 clorofilla.casa/
 ├── ansible/
-│   ├── 1_setup.yml          # Node provisioning (Docker, Tailscale, K3s)
+│   ├── 1_setup.yml          # Node provisioning (Tailscale, K3s)
 │   ├── 2_services.yml       # K8s workload deployments (ordered by filename)
-│   ├── 3_monitoring.yml     # Monitoring stack (Docker, KSM, Prometheus agent)
+│   ├── 3_monitoring.yml     # Monitoring stack (Docker node_exporter, Prometheus, Grafana)
 │   ├── ansible.cfg
-│   ├── collections/         # Ansible Galaxy collection (clorofilla.casa)
+│   ├── collections/         # Ansible Galaxy collection requirements and local collection
+│   ├── roles/               # Ansible Galaxy role requirements
 │   ├── group_vars/
 │   │   └── all/
 │   │       ├── vars.yml     # Plain variables
 │   │       └── vault.yml    # Encrypted secrets (ansible-vault)
 │   ├── inventory/
-│   │   └── hosts.yml        # Inventory — target node: elitedesk-downstairs
+│   │   └── hosts.yml        # Inventory — target node: bfg
 │   ├── k8s/                 # Kubernetes manifests (*.yml) and Helm values
 │   │   ├── monitoring/      # Monitoring manifests
-│   │   │   ├── prometheus-agent.yml.j2   # Jinja2 template (rendered by Ansible)
-│   │   │   ├── kube-state-metrics-values.yml
-│   │   │   └── alert-rules.yml
+│   │   │   ├── prometheus.yml            # Local Prometheus server
+│   │   │   └── kube-state-metrics-values.yml
 │   │   ├── audiomuse-ai-ingress.yml
 │   │   ├── audiomuse-ai-values.yml
 │   │   ├── audiomuse-database.yml
@@ -62,8 +62,9 @@ k8s: add matter server to home assistant pod
 
 ## Environment
 
-- **OS**: AlmaLinux 10 (RHEL-compatible)
-- **Orchestration**: K3s (single-node, HP EliteDesk)
+- **OS**: Fedora 44
+- **Orchestration**: K3s (single-node, bfg)
+- **GPU acceleration**: Immich ML and VAAPI video transcoding use the Raphael integrated GPU; the RX 6950 XT remains available for LLM workloads
 - **Storage**: NAS at `192.168.1.155` (`/mnt/fast/1tb/services`)
 - **Networking**: Tailscale only — no public exposure
 - **DNS**: PorkBun, pointing to Tailscale IPs
@@ -78,21 +79,16 @@ Deployed via `ansible/3_monitoring.yml`. Components:
 |-----------|-------|------|---------|
 | **node_exporter** | Docker container on node | 9100 | Host metrics (CPU, RAM, disk, hwmon temps/fans/voltages) |
 | **kube-state-metrics** | K8s Deployment in `monitoring` namespace | 8080 | K8s object state (pods, deployments, PVCs, nodes) |
-| **prometheus-agent** | K8s DaemonSet in `monitoring` namespace | 9600 | Scrapes local exporters → remote-write to Grafana Cloud |
+| **Prometheus** | K8s Deployment in `monitoring` namespace | 9090 | Scrapes node_exporter, kube-state-metrics, and the K3s kubelet |
 
-### Prometheus Agent Config (`prometheus-agent.yml.j2`)
+### Prometheus Config (`k8s/monitoring/prometheus.yml`)
 
-Scrapes three targets:
-- `localhost:9100` — node_exporter
+The local Prometheus server scrapes three targets:
+- `bfg:9100` — node_exporter
 - `kube-state-metrics.monitoring.svc.cluster.local:8080` — kube-state-metrics
-- `localhost:10255` — k3s kubelet (read-only, cadvisor metrics)
+- `bfg:10255` — k3s kubelet (read-only, cadvisor metrics)
 
-Remote-writes to Grafana Cloud using `basic_auth` with vault variables:
-```yaml
-grafanacloud_prometheus_url: "https://prometheus-prod-58-prod-eu-central-0.grafana.net/api/prom/push"
-grafanacloud_prometheus_username: "3084568"
-grafanacloud_prometheus_password: "glc_eyJv..."
-```
+Prometheus data is persisted in the `prometheus-data` PVC and exposed internally through the Prometheus IngressRoute.
 
 ### Grafana Dashboards
 
@@ -130,9 +126,9 @@ Recommended dashboards to import into your existing Grafana:
 
 ### Docker on Nodes
 
-- Docker is installed idempotently by the monitoring playbook if missing
+- Docker is installed idempotently by the monitoring playbook if missing on the Fedora bfg node
 - node_exporter runs as a privileged Docker container on the node (not in K8s) — it needs host access to `/sys`, `/proc`, `/dev`
-- Delegate Docker tasks to the target node with `delegate_to: elitedesk-downstairs`
+- Immich ML is not Docker-managed; it runs in the Immich Helm chart with Raphael GPU device mounts
 
 ### K8s Manifest Conventions
 
@@ -142,10 +138,6 @@ Recommended dashboards to import into your existing Grafana:
 - Namespaces are created inline in playbooks (no separate namespace manifests)
 
 ## Common Pitfalls
-
-### Prometheus Agent WAL
-
-Prometheus Agent persists its WAL (write-ahead log) on disk. If you change the remote-write URL, **delete the pod** to force a fresh start — the old WAL will replay with stale URLs.
 
 ### Blackbox Exporter v0.28+
 
@@ -165,7 +157,7 @@ Many old fields were removed in v0.28: `preferred_http_version`, `get_body_as`, 
 
 ### Port Conflicts
 
-Prometheus agent uses `--web.listen-address=:9600` because port 9090 is already in use by the main Prometheus server. Always check for port conflicts before deploying.
+Prometheus listens on port 9090 and node_exporter listens on port 9100. Always check for port conflicts before deploying.
 
 ### Jinja2 in K8s Manifests
 
@@ -194,10 +186,10 @@ ansible-playbook ansible/3_monitoring.yml -i ansible/inventory/hosts.yml --tags 
 kubectl get pods -n monitoring
 
 # Check logs
-kubectl logs -n monitoring -l app=prometheus-agent --tail=20
+kubectl logs -n monitoring -l app=prometheus --tail=20
 
 # Force restart (e.g., after config changes)
-kubectl delete pod -n monitoring -l app=prometheus-agent
+kubectl rollout restart deployment/prometheus -n monitoring
 
 # Port-forward for debugging
 kubectl port-forward -n monitoring svc/kube-state-metrics 8080:8080

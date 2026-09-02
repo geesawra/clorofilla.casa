@@ -23,7 +23,7 @@ spec:
                 app: transmission
         spec:
             nodeSelector:
-                kubernetes.io/hostname: reform
+                kubernetes.io/hostname: bfg
             containers:
                 - name: transmission-container
                   image: ghcr.io/linuxserver/transmission:4.0.6

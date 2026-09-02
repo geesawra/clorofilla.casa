@@ -23,7 +23,7 @@ spec:
                 app: jackett
         spec:
             nodeSelector:
-                kubernetes.io/hostname: reform
+                kubernetes.io/hostname: bfg
             containers:
                 - name: jackett-container
                   image: lscr.io/linuxserver/jackett:latest

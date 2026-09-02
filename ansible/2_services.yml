@@ -1,147 +1,206 @@
 ---
+- name: Validate bfg GPU prerequisites for Immich
+  hosts: bfg
+  become: true
+  tags: immich,immich-ml
+  tasks:
+    - name: Inspect Raphael KFD device
+      ansible.builtin.stat:
+        path: /dev/kfd
+      register: immich_kfd
+
+    - name: Inspect Raphael DRM card device
+      ansible.builtin.stat:
+        path: /dev/dri/card1
+      register: immich_dri_card
+
+    - name: Inspect Raphael DRM render device
+      ansible.builtin.stat:
+        path: /dev/dri/renderD129
+      register: immich_dri_render
+
+    - name: Read Fedora video group
+      ansible.builtin.command: getent group video
+      register: immich_video_group
+      changed_when: false
+
+    - name: Read Fedora render group
+      ansible.builtin.command: getent group render
+      register: immich_render_group
+      changed_when: false
+
+    - name: Assert the validated Raphael device mapping is present
+      ansible.builtin.assert:
+        that:
+          - immich_kfd.stat.exists and immich_kfd.stat.ischr
+          - immich_dri_card.stat.exists and immich_dri_card.stat.ischr
+          - immich_dri_render.stat.exists and immich_dri_render.stat.ischr
+          - immich_video_group.rc == 0
+          - immich_video_group.stdout is regex(':39:')
+          - immich_render_group.rc == 0
+          - immich_render_group.stdout is regex(':105:')
+        fail_msg: >-
+          bfg no longer matches the validated Raphael mapping: expected /dev/kfd,
+          /dev/dri/card1, /dev/dri/renderD129, video GID 39, and render GID 105.
+          Re-identify the iGPU before changing the chart values.
+
 - name: Deploy K8s services
   hosts: localhost
   become: false
   tags: k8s
   tasks:
-      - name: Add NFS provisioner Helm repo
-        kubernetes.core.helm_repository:
-            name: nfs-subdir-external-provisioner
-            repo_url: >-
-                https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+    - name: Add NFS provisioner Helm repo
+      kubernetes.core.helm_repository:
+        name: nfs-subdir-external-provisioner
+        repo_url: >-
+          https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
 
-      - name: Deploy NFS provisioner
-        kubernetes.core.helm:
-            name: nfs-provisioner
-            chart_ref: >-
-                nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
-            release_namespace: kube-system
-            create_namespace: true
-            values:
-                nfs:
-                    server: "{{ nas_ip }}"
-                    path: "{{ nas_path }}"
-                storageClass:
-                    name: nfs-client
-                    defaultClass: false
+    - name: Deploy NFS provisioner
+      kubernetes.core.helm:
+        name: nfs-provisioner
+        chart_ref: >-
+          nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+        release_namespace: kube-system
+        create_namespace: true
+        values:
+          nfs:
+            server: "{{ nas_ip }}"
+            path: "{{ nas_path }}"
+          storageClass:
+            name: nfs-client
+            defaultClass: false
 
-      - name: Mount services share from NAS on host
-        tags: jackett
-        ansible.builtin.mount:
-            path: /mnt/nfs/jackett
-            src: "{{ nas_ip }}:/mnt/fast/1tb/services"
-            fstype: nfs
-            opts: vers=3,soft,timeo=300,retrans=3
-            state: mounted
-        delegate_to: elitedesk-downstairs
-        become: yes
+    - name: Mount services share from NAS on host
+      tags: jackett
+      ansible.builtin.mount:
+        path: /mnt/nfs/jackett
+        src: "{{ nas_ip }}:/mnt/fast/1tb/services"
+        fstype: nfs
+        opts: vers=3,soft,timeo=300,retrans=3
+        state: mounted
+      delegate_to: bfg
+      become: yes
 
-      - name: Create Jackett config dir on NAS
-        tags: jackett
-        ansible.builtin.file:
-            path: /mnt/nfs/jackett/config
-            state: directory
-        delegate_to: elitedesk-downstairs
-        become: yes
+    - name: Create Jackett config dir on NAS
+      tags: jackett
+      ansible.builtin.file:
+        path: /mnt/nfs/jackett/config
+        state: directory
+      delegate_to: bfg
+      become: yes
 
-      - name: Unmount services share from host
-        tags: jackett
-        ansible.builtin.mount:
-            path: /mnt/nfs/jackett
-            state: absent
-        delegate_to: elitedesk-downstairs
-        become: yes
+    - name: Unmount services share from host
+      tags: jackett
+      ansible.builtin.mount:
+        path: /mnt/nfs/jackett
+        state: absent
+      delegate_to: bfg
+      become: yes
 
-      - name: Deploy Jackett
-        tags: jackett
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/jackett.yml
+    - name: Deploy Jackett
+      tags: jackett
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/jackett.yml
 
-      - name: Deploy Home Assistant stable
-        tags: ha
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/ha.yml
+    - name: Deploy Home Assistant stable
+      tags: ha
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/ha.yml
 
-      - name: Deploy Transmission for my torrents
-        tags: transmission
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/transmission.yml
+    - name: Deploy Transmission for my torrents
+      tags: transmission
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/transmission.yml
 
-      - name: Deploy Transmission for other's torrents
-        tags: transmission-others,transmission
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/transmission_others.yml
+    - name: Deploy Transmission for other's torrents
+      tags: transmission-others,transmission
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/transmission_others.yml
 
-      - name: Deploy postgres operator
-        tags: postgres
-        kubernetes.core.k8s:
-            state: present
-            src: >-
-                https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
+    - name: Deploy postgres operator
+      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      kubernetes.core.k8s:
+        state: present
+        src: >-
+          https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
 
-      - name: Deploy Immich dependencies
-        tags: immich
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/immich.yml
+    - name: Wait for CloudNativePG CRDs to be established
+      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      ansible.builtin.command: >-
+        kubectl wait --for=condition=Established
+        crd/clusters.postgresql.cnpg.io
+        crd/poolers.postgresql.cnpg.io
+        crd/backups.postgresql.cnpg.io
+        --timeout=180s
+      changed_when: false
 
-      - name: Deploy Immich through Helm
-        tags: immich
-        kubernetes.core.helm:
-            name: immich
-            chart_ref: oci://ghcr.io/immich-app/immich-charts/immich
-            chart_version: 0.13.1
-            release_namespace: immich
-            values_files:
-                - k8s/immich_values.yml
+    - name: Wait for CloudNativePG controller to be Available
+      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      ansible.builtin.command: >-
+        kubectl wait --for=condition=Available
+        deployment/cnpg-controller-manager
+        -n cnpg-system --timeout=180s
+      changed_when: false
 
-      - name: Deploy Immich ML server (standalone, on reform)
-        tags: immich
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/immich-ml-server.yml
+    - name: Deploy Immich dependencies
+      tags: immich,immich-ml
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/immich.yml
 
-      - name: Deploy Navidrome
-        tags: navidrome
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/navidrome.yml
+    - name: Deploy Immich through Helm
+      tags: immich,immich-ml
+      kubernetes.core.helm:
+        name: immich
+        chart_ref: oci://ghcr.io/immich-app/immich-charts/immich
+        chart_version: 0.13.1
+        release_namespace: immich
+        wait: true
+        wait_timeout: 10m
+        values_files:
+          - k8s/immich_values.yml
 
-      - name: Deploy AudioMuse-AI database
-        tags: navidrome,audiomuse
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/audiomuse-database.yml
+    - name: Deploy Navidrome
+      tags: navidrome
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/navidrome.yml
 
-      - name: Deploy AudioMuse-AI ingress
-        tags: navidrome,audiomuse
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/audiomuse-ai-ingress.yml
+    - name: Deploy AudioMuse-AI database
+      tags: navidrome,audiomuse
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/audiomuse-database.yml
 
-      - name: Add AudioMuse-AI Helm repo
-        tags: navidrome,audiomuse
-        kubernetes.core.helm_repository:
-            name: audiomuse-ai
-            repo_url: https://NeptuneHub.github.io/AudioMuse-AI-helm
-            binary_path: /usr/bin/helm3
+    - name: Deploy AudioMuse-AI ingress
+      tags: navidrome,audiomuse
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/audiomuse-ai-ingress.yml
 
-      - name: Deploy AudioMuse-AI
-        tags: navidrome,audiomuse
-        kubernetes.core.helm:
-            name: audiomuse
-            chart_ref: audiomuse-ai/audiomuse-ai
-            release_namespace: navidrome
-            binary_path: /usr/bin/helm3
-            values_files:
-                - k8s/audiomuse-ai-values.yml
+    - name: Add AudioMuse-AI Helm repo
+      tags: navidrome,audiomuse
+      kubernetes.core.helm_repository:
+        name: audiomuse-ai
+        repo_url: https://NeptuneHub.github.io/AudioMuse-AI-helm
+        binary_path: /usr/bin/helm3
 
-      - name: Deploy reverse proxied services
-        tags: reverse-proxy
-        kubernetes.core.k8s:
-            state: present
-            src: k8s/reverse-proxy.yml
+    - name: Deploy AudioMuse-AI
+      tags: navidrome,audiomuse
+      kubernetes.core.helm:
+        name: audiomuse
+        chart_ref: audiomuse-ai/audiomuse-ai
+        release_namespace: navidrome
+        binary_path: /usr/bin/helm3
+        values_files:
+          - k8s/audiomuse-ai-values.yml
+
+    - name: Deploy reverse proxied services
+      tags: reverse-proxy
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/reverse-proxy.yml

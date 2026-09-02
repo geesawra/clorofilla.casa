@@ -43,32 +43,6 @@
             state: latest
         when: ansible_facts['os_family'] == "RedHat"
 
-      - name: Purge stale Tailscale apt sources and keys (Debian)
-        ansible.builtin.file:
-            path: "{{ item }}"
-            state: absent
-        loop:
-            - /etc/apt/keyrings/tailscale.gpg
-            - /usr/share/keyrings/tailscale-archive-keyring.gpg
-            - /etc/apt/sources.list.d/tailscale.list
-            - /etc/apt/sources.list.d/tailscale.sources
-        when: ansible_facts['os_family'] == "Debian"
-
-      - name: Ensure updated packages (Debian)
-        ansible.builtin.apt:
-            name: "*"
-            state: latest
-            update_cache: yes
-        when: ansible_facts['os_family'] == "Debian"
-
-      - name: Stop, disable, and mask GDM (Debian — headless node)
-        ansible.builtin.systemd:
-            name: gdm
-            state: stopped
-            enabled: no
-            masked: yes
-        when: ansible_facts['os_family'] == "Debian"
-
 - name: Install Tailscale
   hosts: k3s_cluster
   become: true
@@ -140,13 +114,6 @@
             state: latest
         when: ansible_facts['os_family'] == "RedHat"
 
-      - name: Install powertop (Debian, x86 only)
-        ansible.builtin.apt:
-            name: powertop
-            state: latest
-            update_cache: yes
-        when: ansible_facts['os_family'] == "Debian" and ansible_facts['architecture'] == "x86_64"
-
       - name: Write systemd unit (x86 only)
         copy:
             dest: /etc/systemd/system/powertop.service
@@ -213,30 +180,7 @@
         ansible.builtin.service:
             name: systemd-journald
             state: restarted
-
       - name: Restart k3s
         ansible.builtin.service:
             name: "{{ 'k3s-agent' if 'agent' in group_names else 'k3s' }}"
             state: restarted
-
-- name: Pin kernel packages (reform — required for DKMS modules)
-  hosts: reform
-  tags: pin-kernel
-  gather_facts: true
-  become: true
-  tasks:
-      - name: Discover kernel packages
-        ansible.builtin.shell:
-            cmd: dpkg -l | awk '/linux-(image|headers)-{{ ansible_kernel | regex_replace("\..*", "") }}/ {print $2}'
-        register: kernel_pkgs
-        changed_when: false
-
-      - name: Hold kernel packages
-        ansible.builtin.command:
-            cmd: "apt-mark hold {{ item }}"
-        loop: "{{ kernel_pkgs.stdout_lines }}"
-        when: kernel_pkgs.stdout_lines | length > 0
-        changed_when: false
-
-- name: Install RKNPU kernel module (MNT Reform DSI only)
-  ansible.builtin.import_playbook: rknpu-reform.yml
