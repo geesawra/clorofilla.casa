@@ -4,12 +4,30 @@ metadata:
     name: home-automation
 ---
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+    name: home-assistant-config-legacy-pv
+spec:
+    capacity:
+        storage: 1Gi
+    accessModes:
+        - ReadWriteMany
+    persistentVolumeReclaimPolicy: Retain
+    storageClassName: ""
+    mountOptions:
+        - nfsvers=3
+    nfs:
+        server: 192.168.1.155
+        path: /mnt/fast/1tb/services/home-automation-home-assistant-config-pvc-14874a39-fe7f-4cd8-80e4-2da9d852e3c6
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-    name: home-assistant-config
+    name: home-assistant-config-legacy
     namespace: home-automation
 spec:
-    storageClassName: nfs-client
+    storageClassName: ""
+    volumeName: home-assistant-config-legacy-pv
     accessModes:
         - ReadWriteMany
     resources:
@@ -53,13 +71,82 @@ metadata:
     name: home-assistant-http-config
     namespace: home-automation
 data:
-    http.yaml: |
-        http:
+    http.json: |
+        {
+          "use_x_forwarded_for": true,
+          "trusted_proxies": [
+            "10.42.0.0/16",
+            "127.0.0.1/32",
+            "::1/128"
+          ]
+        }
+    configure-http.py: |
+        import datetime
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+
+        config_dir = Path("/config")
+        storage_dir = config_dir / ".storage"
+        storage_path = storage_dir / "http"
+        proxy_config = json.loads((Path("/tmp/http-config") / "http.json").read_text())
+
+        if storage_path.exists():
+            document = json.loads(storage_path.read_text())
+        else:
+            document = {
+                "version": 2,
+                "minor_version": 2,
+                "key": "http",
+                "data": {},
+            }
+
+        data = document.setdefault("data", {})
+        if not isinstance(data.get("stable"), dict):
+            legacy_config = dict(data)
+            document["minor_version"] = 2
+            data = document["data"] = {"stable": legacy_config}
+        stable = data.get("stable") or {
+            "server_port": 8123,
+            "cors_allowed_origins": ["https://cast.home-assistant.io"],
+            "login_attempts_threshold": -1,
+            "ip_ban_enabled": True,
+            "ssl_profile": "modern",
+            "use_x_frame_options": True,
+            "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "error": None,
+            "error_message": None,
+        }
+        stable.update(proxy_config)
+        stable["error"] = None
+        stable["error_message"] = None
+        data["stable"] = stable
+        data["pending"] = None
+        data["yaml_migration_done"] = True
+        document["version"] = 2
+        document["minor_version"] = 2
+        document["key"] = "http"
+
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=storage_dir, delete=False
+        ) as temporary:
+            json.dump(document, temporary, indent=2, sort_keys=True)
+            temporary.write("\n")
+            temporary_path = temporary.name
+        os.replace(temporary_path, storage_path)
+
+        generated_yaml = """http:
           use_x_forwarded_for: true
           trusted_proxies:
             - 10.42.0.0/16
             - 127.0.0.1
             - ::1
+        """
+        yaml_path = config_dir / "configuration.yaml"
+        if yaml_path.exists() and yaml_path.read_text().strip() == generated_yaml.strip():
+            yaml_path.write_text("")
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -86,13 +173,9 @@ spec:
             nodeSelector:
                 node-role.kubernetes.io/control-plane: "true"
             initContainers:
-                - name: copy-config
-                  image: busybox:latest
-                  command: ["sh", "-c"]
-                  args:
-                      - |
-                          grep -q "^http:" /config/configuration.yaml || { echo "" >> /config/configuration.yaml; cat /tmp/http-config/http.yaml >> /config/configuration.yaml; }
-                          echo "Config file copied"
+                - name: configure-http
+                  image: "ghcr.io/home-assistant/home-assistant:stable"
+                  command: ["python3", "/tmp/http-config/configure-http.py"]
                   volumeMounts:
                       - mountPath: /config
                         name: home-assistant-config
@@ -103,10 +186,10 @@ spec:
                   image: ghcr.io/matter-js/python-matter-server:stable
                   securityContext:
                       privileged: true
-                      volumeMounts:
-                          - mountPath: /data
-                            name: home-assistant-config
-                            subDir: matter-server
+                  volumeMounts:
+                      - mountPath: /data
+                        name: home-assistant-config
+                        subPath: matter-server
                 - name: home-assistant
                   image: "ghcr.io/home-assistant/home-assistant:stable"
                   securityContext:
@@ -125,7 +208,7 @@ spec:
             volumes:
                 - name: home-assistant-config
                   persistentVolumeClaim:
-                      claimName: home-assistant-config
+                      claimName: home-assistant-config-legacy
                 - name: http-config
                   configMap:
                       name: home-assistant-http-config

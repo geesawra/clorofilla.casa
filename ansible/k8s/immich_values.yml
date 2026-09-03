@@ -36,7 +36,7 @@ server:
       containers:
         main:
           image:
-            tag: v3.0.2
+            tag: v3.1.0
           env:
             DB_HOSTNAME:
               valueFrom:
@@ -85,7 +85,7 @@ machine-learning:
         main:
           image:
             repository: ghcr.io/immich-app/immich-machine-learning
-            tag: v3.0.2-rocm
+            tag: v3.1.0-rocm
           env:
             TRANSFORMERS_CACHE: /cache
             HF_XET_CACHE: /cache/huggingface-xet

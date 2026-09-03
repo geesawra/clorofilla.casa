@@ -17,7 +17,7 @@ attached to the provided API key.
 
 ## Prerequisites and dependency installation
 
-The playbooks target the Fedora 44 `bfg` host. The control machine needs Ansible, Kubernetes/Helm clients, Python dependencies, and the Galaxy dependencies used by the playbooks.
+The playbooks target the Fedora 44 `bfg` host. The control machine needs Ansible, Kubernetes/Helm clients, the `kubernetes` and `netaddr` Python packages, and the Galaxy dependencies used by the playbooks.
 
 ### Install control-machine tools
 
@@ -95,7 +95,7 @@ kubectl get nodes
 
 Immich is entirely Helm-managed. There is no production Docker ML container:
 
-- the Immich chart runs the `v3.0.2-rocm` machine-learning component on `bfg`;
+- the Immich chart runs the `v3.1.0-rocm` machine-learning component on `bfg`;
 - the ML pod receives Raphael's `/dev/kfd`, `/dev/dri/card1`, and `/dev/dri/renderD129` devices;
 - the chart sets `ROCR_VISIBLE_DEVICES=0`, `HSA_OVERRIDE_GFX_VERSION=10.3.0`, and `HSA_USE_SVM=0`;
 - the server uses the same Raphael DRM devices for declarative VAAPI transcoding and hardware decode;
