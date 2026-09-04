@@ -3,8 +3,8 @@
   hosts: k3s_cluster
   gather_facts: false
   tasks:
-      - name: Import global variables (required due to import playbook for K3s)
-        set_fact:
+      - name: Import global variables (required due to import playbook for K3s)  # noqa: run-once[task]
+        ansible.builtin.set_fact:
             ansible_become_password: "{{ ansible_become_password }}"
             k3s_version: "{{ k3s_version_num }}"
             api_endpoint: "{{ api_endpoint_str }}"
@@ -22,22 +22,23 @@
             name: exploide.dnf-automatic
         vars:
             dnf_automatic_reboot: true
-            dnf_automatic_reboot_OnCalendar: "04:00"
+            dnf_automatic_reboot_OnCalendar: "04:00"  # noqa: var-naming[pattern]
         when: ansible_facts['os_family'] == "RedHat"
 
       - name: Stop, disable, and mask firewalld
         ansible.builtin.systemd:
             name: firewalld
             state: stopped
-            enabled: no
-            masked: yes
+            enabled: false
+            masked: true
         when: ansible_facts['os_family'] == "RedHat"
 
       - name: Set hostname
-        hostname:
+        ansible.builtin.hostname:
             name: "{{ inventory_hostname | replace('_', '-') }}"
 
-      - name: Ensure updated packages (RHEL)
+      # This task intentionally upgrades every installed package during system initialization.
+      - name: Ensure updated packages (RHEL)  # noqa: package-latest
         ansible.builtin.dnf:
             name: "*"
             state: latest
@@ -67,8 +68,8 @@
         ansible.builtin.fetch:
             src: /etc/rancher/k3s/k3s.yaml
             dest: ~/.kube/config
-            flat: yes
-        become: yes
+            flat: true
+        become: true
 
       - name: Fix server address in kubeconfig
         ansible.builtin.replace:
@@ -111,12 +112,13 @@
       - name: Install powertop (RHEL)
         ansible.builtin.dnf:
             name: powertop
-            state: latest
+            state: present
         when: ansible_facts['os_family'] == "RedHat"
 
       - name: Write systemd unit (x86 only)
-        copy:
+        ansible.builtin.copy:
             dest: /etc/systemd/system/powertop.service
+            mode: "0644"
             content: |
                 [Unit]
                 Description=Powertop tunings
@@ -125,7 +127,10 @@
                 Type=oneshot
                 RemainAfterExit=yes
                 ExecStart=/usr/sbin/powertop --auto-tune
-                ExecStartPost=/bin/bash -c "for f in $(find /sys/bus/usb/drivers/usbhid -regex '.*\/[0-9:.-]+' -printf '%%f\n' | cut -d ':' -f 1 | sort -u); do echo on >| \"/sys/bus/usb/devices/$f/power/control\"; done"
+                ExecStartPost=/bin/bash -c \
+                  "for f in $(find /sys/bus/usb/drivers/usbhid -regex '.*\/[0-9:.-]+' \
+                  -printf '%%f\n' | cut -d ':' -f 1 | sort -u); do echo on >| \
+                  \"/sys/bus/usb/devices/$f/power/control\"; done"
 
                 [Install]
                 WantedBy=multi-user.target sleep.target
@@ -145,16 +150,18 @@
   tasks:
       - name: Limit journald total disk usage to 500MB
         ansible.builtin.lineinfile:
-            create: yes
+            create: true
             path: /etc/systemd/journald.conf
+            mode: "0644"
             regexp: "^#?SystemMaxUse="
             line: "SystemMaxUse=500M"
         notify: Restart journald
 
       - name: Ensure journald persistent storage is enabled
         ansible.builtin.lineinfile:
-            create: yes
+            create: true
             path: /etc/systemd/journald.conf
+            mode: "0644"
             regexp: "^#?Storage="
             line: "Storage=persistent"
         notify: Restart journald
@@ -168,7 +175,8 @@
       - name: Configure K3s log rotation via config.yaml
         ansible.builtin.blockinfile:
             path: /etc/rancher/k3s/config.yaml
-            create: yes
+            create: true
+            mode: "0600"
             block: |
                 kubelet-arg:
                   - "container-log-max-files=3"

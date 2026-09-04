@@ -4,45 +4,65 @@
   become: true
   tags: immich,immich-ml
   tasks:
-    - name: Inspect Raphael KFD device
+    - name: Inspect AMD KFD device
       ansible.builtin.stat:
         path: /dev/kfd
       register: immich_kfd
 
-    - name: Inspect Raphael DRM card device
-      ansible.builtin.stat:
-        path: /dev/dri/card1
-      register: immich_dri_card
+    - name: Inspect AMD DRM card devices
+      ansible.builtin.find:
+        paths: /dev/dri
+        patterns: "card*"
+        file_type: any
+      register: immich_dri_cards
 
-    - name: Inspect Raphael DRM render device
-      ansible.builtin.stat:
-        path: /dev/dri/renderD129
-      register: immich_dri_render
+    - name: Inspect AMD DRM render devices
+      ansible.builtin.find:
+        paths: /dev/dri
+        patterns: "renderD*"
+        file_type: any
+      register: immich_dri_renders
 
     - name: Read Fedora video group
       ansible.builtin.command: getent group video
       register: immich_video_group
       changed_when: false
+      check_mode: false
 
     - name: Read Fedora render group
       ansible.builtin.command: getent group render
       register: immich_render_group
       changed_when: false
+      check_mode: false
 
-    - name: Assert the validated Raphael device mapping is present
+    # A shell is required because Ansible's command module does not expand the
+    # PCI BDF glob. These IDs are the stable selectors used by the DRA claims.
+    - name: Read AMD PCI device IDs
+      ansible.builtin.shell:
+        cmd: >-
+          cat
+          /sys/module/amdgpu/drivers/pci:amdgpu/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:*/device
+        executable: /usr/bin/bash
+      register: immich_amd_pci_device_ids
+      changed_when: false
+      check_mode: false
+
+    - name: Assert the AMD GPU devices are present
       ansible.builtin.assert:
         that:
           - immich_kfd.stat.exists and immich_kfd.stat.ischr
-          - immich_dri_card.stat.exists and immich_dri_card.stat.ischr
-          - immich_dri_render.stat.exists and immich_dri_render.stat.ischr
+          - immich_dri_cards.matched >= 2
+          - immich_dri_renders.matched >= 2
           - immich_video_group.rc == 0
           - immich_video_group.stdout is regex(':39:')
           - immich_render_group.rc == 0
           - immich_render_group.stdout is regex(':105:')
+          - "'0x164e' in immich_amd_pci_device_ids.stdout_lines"
+          - "'0x73a5' in immich_amd_pci_device_ids.stdout_lines"
         fail_msg: >-
-          bfg no longer matches the validated Raphael mapping: expected /dev/kfd,
-          /dev/dri/card1, /dev/dri/renderD129, video GID 39, and render GID 105.
-          Re-identify the iGPU before changing the chart values.
+          bfg must expose /dev/kfd, at least two AMD DRM card/render devices,
+          the Raphael GPU (PCI device ID 0x164e), and the RX 6950 XT
+          (PCI device ID 0x73a5) before Immich can allocate deterministic GPUs.
 
 - name: Deploy K8s services
   hosts: localhost
@@ -72,30 +92,31 @@
 
     - name: Mount services share from NAS on host
       tags: jackett
-      ansible.builtin.mount:
+      ansible.posix.mount:
         path: /mnt/nfs/jackett
         src: "{{ nas_ip }}:/mnt/fast/1tb/services"
         fstype: nfs
         opts: vers=3,soft,timeo=300,retrans=3
         state: mounted
       delegate_to: bfg
-      become: yes
+      become: true
 
     - name: Create Jackett config dir on NAS
       tags: jackett
       ansible.builtin.file:
         path: /mnt/nfs/jackett/config
         state: directory
+        mode: "0755"
       delegate_to: bfg
-      become: yes
+      become: true
 
     - name: Unmount services share from host
       tags: jackett
-      ansible.builtin.mount:
+      ansible.posix.mount:
         path: /mnt/nfs/jackett
         state: absent
       delegate_to: bfg
-      become: yes
+      become: true
 
     - name: Deploy Jackett
       tags: jackett
@@ -120,6 +141,47 @@
       kubernetes.core.k8s:
         state: present
         src: k8s/transmission_others.yml
+
+    - name: Deploy AMD GPU DRA driver
+      tags: amd-gpu,immich,immich-ml
+      kubernetes.core.helm:
+        name: amd-gpu-dra
+        chart_ref: >-
+          https://github.com/ROCm/k8s-gpu-dra-driver/releases/download/v1.0.1/k8s-gpu-dra-driver-v1.0.1.tgz
+        release_namespace: kube-amd-gpu
+        create_namespace: true
+        release_state: present
+        wait: true
+        wait_timeout: 5m
+      when: not ansible_check_mode
+
+    - name: Verify the AMD GPU DRA device class
+      tags: amd-gpu,immich,immich-ml
+      kubernetes.core.k8s_info:
+        api_version: resource.k8s.io/v1
+        kind: DeviceClass
+        name: gpu.amd.com
+      register: amd_gpu_dra_device_class
+      failed_when: amd_gpu_dra_device_class.resources | length != 1
+      when: not ansible_check_mode
+
+    - name: Wait for DRA to publish both AMD GPUs
+      tags: amd-gpu,immich,immich-ml
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - resourceslices
+          - -o
+          - 'jsonpath={range .items[?(@.spec.driver=="gpu.amd.com")].spec.devices[*]}{.attributes.deviceID.string}{"\n"}{end}'
+      register: amd_gpu_dra_device_ids
+      changed_when: false
+      retries: 30
+      delay: 2
+      until:
+        - "'0x164e' in amd_gpu_dra_device_ids.stdout_lines"
+        - "'0x73a5' in amd_gpu_dra_device_ids.stdout_lines"
+      when: not ansible_check_mode
 
     - name: Deploy postgres operator
       tags: postgres,immich,immich-ml,audiomuse,navidrome
@@ -163,6 +225,82 @@
         wait_timeout: 10m
         values_files:
           - k8s/immich_values.yml
+
+    - name: Find the Immich ML pod
+      tags: immich,immich-ml
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: immich
+        label_selectors:
+          - app.kubernetes.io/name=machine-learning
+      register: immich_ml_pods
+      when: not ansible_check_mode
+
+    - name: Find the Immich server pod
+      tags: immich,immich-ml
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: immich
+        label_selectors:
+          - app.kubernetes.io/name=server
+      register: immich_server_pods
+      when: not ansible_check_mode
+
+    - name: Verify the Immich GPU pods are unique and ready
+      tags: immich,immich-ml
+      ansible.builtin.assert:
+        that:
+          - immich_ml_pods.resources | length == 1
+          - immich_ml_pods.resources[0].status.phase == 'Running'
+          - >-
+            immich_ml_pods.resources[0].status.conditions |
+            selectattr('type', 'equalto', 'Ready') |
+            selectattr('status', 'equalto', 'True') |
+            list | length == 1
+          - immich_server_pods.resources | length == 1
+          - immich_server_pods.resources[0].status.phase == 'Running'
+          - >-
+            immich_server_pods.resources[0].status.conditions |
+            selectattr('type', 'equalto', 'Ready') |
+            selectattr('status', 'equalto', 'True') |
+            list | length == 1
+        fail_msg: >-
+          Expected exactly one ready Immich ML pod and one ready Immich server
+          pod after the Helm deployment.
+      when: not ansible_check_mode
+
+    - name: Verify the GPU assigned to Immich ML
+      tags: immich,immich-ml
+      kubernetes.core.k8s_exec:
+        namespace: immich
+        pod: "{{ immich_ml_pods.resources[0].metadata.name }}"
+        command: >-
+          /bin/sh -c 'test -c /dev/kfd &&
+          test "$(find /dev/dri -maxdepth 1 -name "card*" | wc -l)" -eq 1 &&
+          test "$(find /dev/dri -maxdepth 1 -name "renderD*" | wc -l)" -eq 1 &&
+          for device in /dev/dri/card* /dev/dri/renderD*; do
+          test "$(cat "/sys/class/drm/${device##*/}/device/device")" = "0x73a5"; done &&
+          rocminfo | grep -q "Name:.*gfx1030" &&
+          python3 -c "import urllib.request; assert urllib.request.urlopen(\"http://127.0.0.1:3003/ping\").read() == b\"pong\""'
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify the GPU assigned to Immich server
+      tags: immich,immich-ml
+      kubernetes.core.k8s_exec:
+        namespace: immich
+        pod: "{{ immich_server_pods.resources[0].metadata.name }}"
+        command: >-
+          /bin/sh -c 'test -c /dev/kfd &&
+          test "$(find /dev/dri -maxdepth 1 -name "card*" | wc -l)" -eq 1 &&
+          test "$(find /dev/dri -maxdepth 1 -name "renderD*" | wc -l)" -eq 1 &&
+          for device in /dev/dri/card* /dev/dri/renderD*; do
+          test "$(cat "/sys/class/drm/${device##*/}/device/device")" = "0x164e"; done &&
+          ffmpeg -hide_banner -hwaccels 2>/dev/null | grep -qx "vaapi"'
+      changed_when: false
+      when: not ansible_check_mode
 
     - name: Deploy Navidrome
       tags: navidrome

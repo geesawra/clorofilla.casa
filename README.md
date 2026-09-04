@@ -17,7 +17,7 @@ attached to the provided API key.
 
 ## Prerequisites and dependency installation
 
-The playbooks target the Fedora 44 `bfg` host. The control machine needs Ansible, Kubernetes/Helm clients, the `kubernetes` and `netaddr` Python packages, and the Galaxy dependencies used by the playbooks.
+The playbooks target the Fedora 44 `bfg` host. The control machine needs Ansible, Kubernetes/Helm clients, the `kubernetes` and `netaddr` Python packages, `ansible-lint`, and the Galaxy dependencies used by the playbooks.
 
 ### Install control-machine tools
 
@@ -37,7 +37,13 @@ The repository declares every collection and role dependency in tracked requirem
 just bootstrap
 ```
 
-It installs `ansible/collections/requirements.yml` and `ansible/roles/requirements.yml` on the control machine. If you prefer to invoke Galaxy directly, the equivalent commands are:
+It installs pinned `ansible-lint`, the Python client dependencies, `ansible/collections/requirements.yml`, and `ansible/roles/requirements.yml` on the control machine. Run the complete lint and syntax-check suite with:
+
+```sh
+just check
+```
+
+If you prefer to invoke Galaxy directly, the equivalent collection and role commands are:
 
 ```sh
 ansible-galaxy collection install -r ansible/collections/requirements.yml
@@ -95,13 +101,14 @@ kubectl get nodes
 
 Immich is entirely Helm-managed. There is no production Docker ML container:
 
+- AMD GPU DRA driver v1.0.1 publishes both GPUs to Kubernetes as individually selectable devices;
 - the Immich chart runs the `v3.1.0-rocm` machine-learning component on `bfg`;
-- the ML pod receives Raphael's `/dev/kfd`, `/dev/dri/card1`, and `/dev/dri/renderD129` devices;
-- the chart sets `ROCR_VISIBLE_DEVICES=0`, `HSA_OVERRIDE_GFX_VERSION=10.3.0`, and `HSA_USE_SVM=0`;
-- the server uses the same Raphael DRM devices for declarative VAAPI transcoding and hardware decode;
-- the RX 6950 XT is not mounted into Immich and remains available for LLM workloads.
+- ML requests PCI device ID `0x73a5` and receives the RX 6950 XT;
+- the server requests PCI device ID `0x164e` and receives the Raphael iGPU for VAAPI transcoding and hardware decode;
+- both Deployments use `maxSurge: 0`, because each DRA claim is exclusive and no spare GPU exists during a rollout;
+- DRA injects `/dev/kfd` and only the selected GPU's current DRM card/render nodes through CDI, so `/dev/dri` enumeration changes do not alter the intended mapping.
 
-The temporary Docker container used during the migration was only a GPU probe. It is not managed by Ansible. The chart has `/ping` startup, readiness, and liveness probes for ML; check it with:
+The DRA chart is designed for Kubernetes 1.32 or newer and this deployment uses the stable `resource.k8s.io/v1` API available in K3s 1.35. The Immich chart renders `/ping` startup, readiness, and liveness probes for its ML Deployment; check it with:
 
 ```sh
 kubectl get pods -n immich
@@ -110,7 +117,39 @@ kubectl port-forward -n immich service/immich-machine-learning 3003:3003
 curl http://127.0.0.1:3003/ping
 ```
 
-The current bfg validation observed Fedora 44, Raphael as `gfx1036` when the compatibility override is removed, and device groups `video=39` / `render=105`. The `/dev/dri` numbering is hardware enumeration, not a universal identifier; rerun the GPU preflight and revalidate ROCr after kernel, firmware, or hardware changes.
+### One-time migration from the legacy AMD device plugin
+
+Do this only when changing an existing deployment from `amd.com/gpu` limits to DRA. Stop both legacy GPU workloads before removing the old plugin so the old and new allocation systems can never assign the same physical GPU concurrently:
+
+```sh
+kubectl delete deployment \
+  --namespace immich \
+  immich-server immich-machine-learning \
+  --ignore-not-found \
+  --wait=true
+
+kubectl wait \
+  --namespace immich \
+  --for=delete pod \
+  --selector='app.kubernetes.io/name in (server,machine-learning)' \
+  --timeout=2m
+
+helm uninstall amd-gpu \
+  --namespace kube-system \
+  --wait \
+  --timeout 2m
+
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags immich \
+  --vault-password-file .vault_password
+```
+
+The deletion removes only the two Helm-managed Deployments and their pods; the next Helm upgrade recreates them. It does not delete the Immich database, Valkey, Services, PVCs, or library data. The steady-state Ansible configuration intentionally does not uninstall the legacy release.
+
+The current bfg validation observed Fedora 44, Raphael as `gfx1036`, RX 6950 XT as `gfx1030`, and device groups `video=39` / `render=105`. The `/dev/dri` numbering is hardware enumeration, not a universal identifier; DRA selects the GPUs by stable PCI device IDs `0x164e` and `0x73a5`. Rerun the GPU preflight and revalidate the claims after kernel, firmware, or hardware changes.
+
+`ResourceClaimTemplate.spec` is immutable. If a selector or allocation policy changes, create a new versioned template name, update `immich_values.yml` to reference it, deploy the workloads, and remove the old unused template afterward.
 
 ## Migration and cutover
 

@@ -64,7 +64,7 @@ k8s: add matter server to home assistant pod
 
 - **OS**: Fedora 44
 - **Orchestration**: K3s (single-node, bfg)
-- **GPU acceleration**: Immich ML and VAAPI video transcoding use the Raphael integrated GPU; the RX 6950 XT remains available for LLM workloads
+- **GPU acceleration**: AMD DRA assigns the RX 6950 XT to Immich ML and the Raphael integrated GPU to Immich VAAPI video transcoding
 - **Storage**: NAS at `192.168.1.155` (`/mnt/fast/1tb/services`)
 - **Networking**: Tailscale only — no public exposure
 - **DNS**: PorkBun, pointing to Tailscale IPs
@@ -128,7 +128,7 @@ Recommended dashboards to import into your existing Grafana:
 
 - Docker is installed idempotently by the monitoring playbook if missing on the Fedora bfg node
 - node_exporter runs as a privileged Docker container on the node (not in K8s) — it needs host access to `/sys`, `/proc`, `/dev`
-- Immich ML is not Docker-managed; it runs in the Immich Helm chart with Raphael GPU device mounts
+- Immich ML is not Docker-managed; AMD DRA/CDI assigns it the RX 6950 XT, while the Immich server receives Raphael for VAAPI
 
 ### K8s Manifest Conventions
 

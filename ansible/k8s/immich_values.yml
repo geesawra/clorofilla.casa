@@ -10,25 +10,17 @@ server:
       existingClaim: immich-camera-photos-pvc
       globalMounts: [{ readOnly: true }]
 
-    dev-dri-card1:
-      type: hostPath
-      hostPath: /dev/dri/card1
-      hostPathType: CharDevice
-      globalMounts:
-        - path: /dev/dri/card1
-
-    dev-dri-render129:
-      type: hostPath
-      hostPath: /dev/dri/renderD129
-      hostPathType: CharDevice
-      globalMounts:
-        - path: /dev/dri/renderD129
-
   controllers:
     main:
+      rollingUpdate:
+        surge: "0"
+        unavailable: 1
       pod:
         nodeSelector:
           kubernetes.io/hostname: bfg
+        resourceClaims:
+          - name: gpu
+            resourceClaimTemplateName: immich-server-raphael-gpu-v1
         securityContext:
           supplementalGroups:
             - 39
@@ -37,6 +29,13 @@ server:
         main:
           image:
             tag: v3.1.0
+          resources:
+            claims:
+              - name: gpu
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: Unconfined
           env:
             DB_HOSTNAME:
               valueFrom:
@@ -67,6 +66,31 @@ immich:
     ffmpeg:
       accel: vaapi
       accelDecode: true
+      transcode: disabled
+      acceptedVideoCodecs:
+        - h264
+        - hevc
+      acceptedAudioCodecs:
+        - aac
+        - mp3
+        - opus
+        - pcm_s16le
+      realtime:
+        enabled: true
+        videoCodecs:
+          - h264
+          - hevc
+        resolutions:
+          - 480
+          - 720
+          - 1080
+    machineLearning:
+      ocr:
+        enabled: true
+        modelName: PP-OCRv5_server
+        minDetectionScore: 0.5
+        minRecognitionScore: 0.8
+        maxResolution: 736
   persistence:
     library:
       existingClaim: immich-data-pvc
@@ -74,9 +98,16 @@ machine-learning:
   enabled: true
   controllers:
     main:
+      rollingUpdate:
+        surge: "0"
+        unavailable: 1
       pod:
         nodeSelector:
           kubernetes.io/hostname: bfg
+        hostIPC: true
+        resourceClaims:
+          - name: gpu
+            resourceClaimTemplateName: immich-ml-rx6950xt-gpu-v1
         securityContext:
           supplementalGroups:
             - 39
@@ -86,14 +117,17 @@ machine-learning:
           image:
             repository: ghcr.io/immich-app/immich-machine-learning
             tag: v3.1.0-rocm
+          resources:
+            claims:
+              - name: gpu
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: Unconfined
           env:
             TRANSFORMERS_CACHE: /cache
             HF_XET_CACHE: /cache/huggingface-xet
             MPLCONFIGDIR: /cache/matplotlib-config
-            # ROCr ordinal 0 was validated with only Raphael's device nodes
-            # mounted; do not reuse this value with a different device mapping.
-            ROCR_VISIBLE_DEVICES: "0"
-            HSA_OVERRIDE_GFX_VERSION: "10.3.0"
             HSA_USE_SVM: "0"
   persistence:
     cache:
@@ -102,21 +136,3 @@ machine-learning:
       size: 10Gi
       accessMode: ReadWriteMany
       storageClass: nfs-client
-    dev-kfd:
-      type: hostPath
-      hostPath: /dev/kfd
-      hostPathType: CharDevice
-      globalMounts:
-        - path: /dev/kfd
-    dev-dri-card1:
-      type: hostPath
-      hostPath: /dev/dri/card1
-      hostPathType: CharDevice
-      globalMounts:
-        - path: /dev/dri/card1
-    dev-dri-render129:
-      type: hostPath
-      hostPath: /dev/dri/renderD129
-      hostPathType: CharDevice
-      globalMounts:
-        - path: /dev/dri/renderD129
