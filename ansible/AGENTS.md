@@ -155,6 +155,16 @@ fail_if_header_matches:
 
 Many old fields were removed in v0.28: `preferred_http_version`, `get_body_as`, `fail_if_ssl_verifies_fails`, `ip_version_pref`, `pushgateway_port`, etc. Use the [v0.28 CONFIGURATION.md](https://github.com/prometheus/blackbox_exporter/blob/v0.28.0/CONFIGURATION.md) as reference.
 
+### Immich Backup Restore with CloudNativePG
+
+Immich's built-in restore executes the backup with the configured `app` database role. Automatic backups contain `DROP EXTENSION`, `CREATE EXTENSION`, and `COMMENT ON EXTENSION` statements, but the steady-state CloudNativePG `app` role is intentionally not a superuser.
+
+For a restore, temporarily set `Cluster.spec.enableSuperuserAccess: true`, use the generated `immich-database-superuser` credential to run `ALTER ROLE app WITH SUPERUSER`, and restore the original backup through **Administration → Maintenance**. The generated superuser secret can contain `dbname: "*"`; connect to the database named by `immich-database-app` instead.
+
+Do not strip only extension DDL from the dump. Immich's restore cleanup drops extension-owned objects before processing the dump, which can leave required objects such as the `public.unaccent` text-search dictionary missing. After every restore attempt, run `ALTER ROLE app WITH NOSUPERUSER`, set `enableSuperuserAccess: false`, confirm the generated superuser secret is deleted, and run `immich-admin schema-check`.
+
+Media files and SQL state must match. Managed uploads use `/data/upload/<owner UUID>` and are not safely recoverable by scanning that directory as an external library. Preserve files newer than the selected SQL backup separately and upload them normally after restoration.
+
 ### Port Conflicts
 
 Prometheus listens on port 9090 and node_exporter listens on port 9100. Always check for port conflicts before deploying.

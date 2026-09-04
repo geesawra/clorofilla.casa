@@ -163,6 +163,61 @@ Applying these manifests to a fresh K3s cluster does **not** migrate application
 
 The old-cluster-specific deployment is removed from this repository. The new-host playbooks do not attempt to delete resources from the previous cluster; old-cluster cleanup must be performed explicitly against its retained kubecontext after a successful cutover.
 
+### Restoring an Immich backup into CloudNativePG
+
+Immich's automatic `.sql.gz` backups contain database metadata only. Preserve the matching `/data/upload`, `/data/library`, and external-library files before restoring. A fresh database can appear healthy while showing an incomplete timeline if the media volumes survived but the old database was not restored. A strong indicator is an old owner UUID under `/data/upload/<uuid>` that does not match the current Immich user's UUID.
+
+Use **Administration → Maintenance → Restore database backup** rather than importing managed upload directories as an external library. The built-in restore creates a restore point, restores in a transaction, runs migrations, performs health checks, and rolls back on failure.
+
+The CloudNativePG application role is deliberately not a superuser, but an Immich backup drops and recreates PostgreSQL extensions such as `earthdistance`, `unaccent`, `vector`, and `vchord`. Temporarily elevate the application role for the restore:
+
+```sh
+# 1. Enable a temporary postgres network credential.
+kubectl patch cluster immich-database \
+  --namespace immich \
+  --type merge \
+  --patch '{"spec":{"enableSuperuserAccess":true}}'
+
+# 2. Wait for secret/immich-database-superuser, read its connection fields,
+#    and connect as postgres to the application database.
+#    The secret's dbname may be "*"; use the dbname from
+#    secret/immich-database-app instead.
+kubectl exec --namespace immich immich-database-1 --container postgres -- \
+  env PGPASSWORD="$POSTGRES_PASSWORD" \
+  psql --host "$POSTGRES_HOST" --username postgres --dbname "$APP_DATABASE" \
+  --set ON_ERROR_STOP=on \
+  --command 'ALTER ROLE app WITH SUPERUSER;'
+```
+
+Restore the **original, unmodified** `.sql.gz` file through the Maintenance page. Do not remove only `CREATE EXTENSION` statements: Immich's restore cleanup first drops extension-owned objects, and the restore can then fail on missing objects such as `public.unaccent`.
+
+Immediately after success or failure, revoke the temporary privileges:
+
+```sh
+kubectl exec --namespace immich immich-database-1 --container postgres -- \
+  env PGPASSWORD="$POSTGRES_PASSWORD" \
+  psql --host "$POSTGRES_HOST" --username postgres --dbname "$APP_DATABASE" \
+  --set ON_ERROR_STOP=on \
+  --command 'ALTER ROLE app WITH NOSUPERUSER;'
+
+kubectl patch cluster immich-database \
+  --namespace immich \
+  --type merge \
+  --patch '{"spec":{"enableSuperuserAccess":false}}'
+```
+
+CloudNativePG removes the generated `immich-database-superuser` secret after superuser access is disabled. Verify the final state and restored schema:
+
+```sh
+kubectl get cluster immich-database --namespace immich \
+  --output=jsonpath='{.status.phase}{" superuserAccess="}{.spec.enableSuperuserAccess}{"\n"}'
+
+kubectl exec --namespace immich deployment/immich-server -- \
+  immich-admin schema-check
+```
+
+Expected steady state: the cluster is healthy, `enableSuperuserAccess` is `false`, the `app` role has `rolsuper = false`, the generated superuser secret is absent, migrations are current, and no schema drift is detected. Preserve separately any media written after the selected backup timestamp and upload it normally after restoration; orphaned files inside Immich-managed storage are not discovered automatically.
+
 ## A note on reproducibility
 
 This repo is mostly to keep me safe, you're not really supposed to deploy this stuff anywhere else, though feel free to draw inspiration from it!
