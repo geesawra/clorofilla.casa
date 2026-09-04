@@ -1,3 +1,136 @@
+# The AudioMuse Helm chart does not expose worker-only image/device settings;
+# the stock worker is disabled in the values file and this deployment uses the
+# ROCm image with direct access to the RX 6950 XT device nodes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audiomuse-migraphx-cache
+  namespace: navidrome
+spec:
+  storageClassName: nfs-client
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audiomuse-miopen-cache
+  namespace: navidrome
+spec:
+  storageClassName: nfs-client
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audiomuse-rocm-worker
+  namespace: navidrome
+  labels:
+    app.kubernetes.io/name: audiomuse-ai
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: audiomuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: audiomuse-ai
+      app.kubernetes.io/component: rocm-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: audiomuse-ai
+        app.kubernetes.io/component: rocm-worker
+        app.kubernetes.io/part-of: audiomuse
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: bfg
+      hostIPC: true
+      securityContext:
+        fsGroup: 0
+        runAsGroup: 0
+        runAsUser: 0
+        supplementalGroups:
+          - 39
+          - 105
+      containers:
+        - name: rq-worker
+          image: ghcr.io/schaka/audiomuse-ai-rocm:latest-gfx1030
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            runAsGroup: 0
+            runAsUser: 0
+            seccompProfile:
+              type: Unconfined
+            seLinuxOptions:
+              type: spc_t
+          env:
+            - name: SERVICE_TYPE
+              value: worker
+            - name: USE_GPU_CLUSTERING
+              value: "true"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: audiomuse-database-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: audiomuse-database-app
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: audiomuse-database-app
+                  key: dbname
+          envFrom:
+            - configMapRef:
+                name: audiomuse-audiomuse-ai-env-vars
+          volumeMounts:
+            - name: rocm-kfd
+              mountPath: /dev/kfd
+            - name: rocm-dri-card
+              mountPath: /dev/dri/card1
+            - name: rocm-dri-render
+              mountPath: /dev/dri/renderD128
+            - name: app-temp-audio
+              mountPath: /app/temp_audio
+            - name: migraphx-cache
+              mountPath: /app/.cache/migraphx
+            - name: miopen-cache
+              mountPath: /app/.cache/miopen
+      volumes:
+        - name: rocm-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: rocm-dri-card
+          hostPath:
+            path: /dev/dri/card1
+            type: CharDevice
+        - name: rocm-dri-render
+          hostPath:
+            path: /dev/dri/renderD128
+            type: CharDevice
+        - name: app-temp-audio
+          emptyDir: {}
+        - name: migraphx-cache
+          persistentVolumeClaim:
+            claimName: audiomuse-migraphx-cache
+        - name: miopen-cache
+          persistentVolumeClaim:
+            claimName: audiomuse-miopen-cache
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:

@@ -46,6 +46,7 @@ spec:
                       - sh
                       - -c
                       - |
+                          mkdir -p /data/plugins
                           wget -q -O /data/plugins/audiomuseai.ndp \
                             https://github.com/NeptuneHub/AudioMuse-AI-NV-plugin/releases/download/v8/audiomuseai.ndp
                   volumeMounts:

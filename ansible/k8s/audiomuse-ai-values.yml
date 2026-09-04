@@ -31,8 +31,10 @@ flask:
     service:
         type: ClusterIP
 
+# The stock worker is replaced by the ROCm worker manifest in
+# audiomuse-ai-ingress.yml; keep this chart-managed worker scaled to zero.
 worker:
-    replicaCount: 1
+    replicaCount: 0
 
 # No ingress through Helm — we'll use a Traefik IngressRoute like everything else
 ingress:
