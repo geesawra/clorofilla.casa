@@ -48,27 +48,6 @@ subsets:
 apiVersion: v1
 kind: Service
 metadata:
-    name: almalinux-webui
-    namespace: reverse-proxy
-spec:
-    ports:
-        - port: 9090
-          targetPort: 9090
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-    name: almalinux-webui
-    namespace: reverse-proxy
-subsets:
-    - addresses:
-          - ip: 192.168.1.221
-      ports:
-          - port: 9090
----
-apiVersion: v1
-kind: Service
-metadata:
     name: bfg
     namespace: reverse-proxy
 spec:
@@ -126,25 +105,6 @@ spec:
           services:
               - name: zerobyte
                 port: 30314
-    tls:
-        certResolver: default
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-    name: almalinux-webui
-    namespace: reverse-proxy
-spec:
-    entryPoints:
-        - websecure
-    routes:
-        - match: Host(`almalinux.clorofilla.casa`)
-          kind: Rule
-          services:
-              - name: almalinux-webui
-                port: 9090
-                scheme: https
-                serversTransport: insecure-skip-verify
     tls:
         certResolver: default
 ---

@@ -61,6 +61,7 @@ spec:
         spec:
             nodeSelector:
                 kubernetes.io/hostname: bfg
+            # Prometheus uses host networking so LAN clients can reach its dedicated host port 9092.
             hostNetwork: true
             dnsPolicy: ClusterFirstWithHostNet
             containers:
@@ -70,9 +71,10 @@ spec:
                       - "--config.file=/etc/prometheus/prometheus.yml"
                       - "--storage.tsdb.path=/prometheus"
                       - "--storage.tsdb.retention.time=365d"
-                      - "--web.listen-address=:9090"
+                      # Port 9090 is used by Cockpit on the host; keep host networking for LAN clients.
+                      - "--web.listen-address=:9092"
                   ports:
-                      - containerPort: 9090
+                      - containerPort: 9092
                   volumeMounts:
                       - name: config
                         mountPath: /etc/prometheus
@@ -99,7 +101,7 @@ spec:
     ports:
         - name: http
           port: 9090
-          targetPort: 9090
+          targetPort: 9092
 ---
 # IngressRoute for prometheus.clorofilla.casa
 apiVersion: traefik.io/v1alpha1

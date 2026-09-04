@@ -1,4 +1,22 @@
 ---
+# Cockpit retains its native host port 9090; Prometheus uses host port 9092.
+- name: Install and enable Cockpit
+  hosts: k3s_cluster
+  become: true
+  tags: monitoring,cockpit
+  tasks:
+      - name: Install Cockpit
+        ansible.builtin.dnf:
+            name: cockpit
+            state: present
+
+      - name: Enable and start Cockpit
+        ansible.builtin.systemd:
+            name: cockpit.socket
+            state: started
+            enabled: true
+        when: not ansible_check_mode
+
 # Docker is used here only for the existing node_exporter container.
 # Immich ML is deployed by the Immich Helm chart in 2_services.yml.
 - name: Install and enable Docker for node_exporter

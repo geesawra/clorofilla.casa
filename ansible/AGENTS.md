@@ -79,7 +79,7 @@ Deployed via `ansible/3_monitoring.yml`. Components:
 |-----------|-------|------|---------|
 | **node_exporter** | Docker container on node | 9100 | Host metrics (CPU, RAM, disk, hwmon temps/fans/voltages) |
 | **kube-state-metrics** | K8s Deployment in `monitoring` namespace | 8080 | K8s object state (pods, deployments, PVCs, nodes) |
-| **Prometheus** | K8s Deployment in `monitoring` namespace | 9090 | Scrapes node_exporter, kube-state-metrics, and the K3s kubelet |
+| **Prometheus** | K8s Deployment in `monitoring` namespace | 9092 (LAN), 9090 (Service) | Scrapes node_exporter, kube-state-metrics, and the K3s kubelet |
 
 ### Prometheus Config (`k8s/monitoring/prometheus.yml`)
 
@@ -167,7 +167,7 @@ Media files and SQL state must match. Managed uploads use `/data/upload/<owner U
 
 ### Port Conflicts
 
-Prometheus listens on port 9090 and node_exporter listens on port 9100. Always check for port conflicts before deploying.
+Prometheus listens on host/LAN port 9092 and its ClusterIP Service uses port 9090; node_exporter listens on port 9100. Always check for port conflicts before deploying.
 
 ### Jinja2 in K8s Manifests
 
