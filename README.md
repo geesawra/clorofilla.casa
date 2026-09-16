@@ -90,6 +90,17 @@ ansible-playbook ansible/2_services.yml -i ansible/inventory/hosts.yml --vault-p
 # 3 — Monitoring (Docker node_exporter, Prometheus, and Grafana)
 ansible-playbook ansible/3_monitoring.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
 ```
+Lidarr is deployed in the existing `torrents` namespace at
+`https://lidarr.clorofilla.casa`. Its configuration is persisted on the NAS;
+configure the Redacted indexer and any download clients manually in the
+Lidarr web UI. Jackett remains in place.
+
+To deploy only Lidarr:
+
+```sh
+ansible-playbook ansible/2_services.yml -i ansible/inventory/hosts.yml \
+  --tags lidarr --vault-password-file .vault_password
+```
 
 After `1_setup.yml` completes, your kubeconfig is at `~/.kube/config`:
 

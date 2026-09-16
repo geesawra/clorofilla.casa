@@ -33,6 +33,8 @@ clorofilla.casa/
 │   │   ├── ha.yml
 │   │   ├── immich.yml
 │   │   ├── immich_values.yml
+│   │   ├── jackett.yml
+│   │   ├── lidarr.yml
 │   │   ├── navidrome.yml
 │   │   ├── reverse-proxy.yml
 │   │   ├── traefik_porkbun.yml

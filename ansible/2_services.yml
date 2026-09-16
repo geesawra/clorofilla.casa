@@ -124,6 +124,40 @@
         state: present
         src: k8s/jackett.yml
 
+    - name: Mount services share for Lidarr config
+      tags: lidarr
+      ansible.posix.mount:
+        path: /mnt/nfs/lidarr
+        src: "{{ nas_ip }}:/mnt/fast/1tb/services"
+        fstype: nfs
+        opts: vers=3,soft,timeo=300,retrans=3
+        state: mounted
+      delegate_to: bfg
+      become: true
+
+    - name: Create Lidarr config dir on NAS
+      tags: lidarr
+      ansible.builtin.file:
+        path: /mnt/nfs/lidarr/lidarr/config
+        state: directory
+        mode: "0755"
+      delegate_to: bfg
+      become: true
+
+    - name: Unmount services share after creating Lidarr config dir
+      tags: lidarr
+      ansible.posix.mount:
+        path: /mnt/nfs/lidarr
+        state: absent
+      delegate_to: bfg
+      become: true
+
+    - name: Deploy Lidarr
+      tags: lidarr
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/lidarr.yml
+
     - name: Deploy Home Assistant stable
       tags: ha
       kubernetes.core.k8s:
