@@ -119,6 +119,9 @@ Immich is entirely Helm-managed. There is no production Docker ML container:
 - both Deployments use `maxSurge: 0`, because each DRA claim is exclusive and no spare GPU exists during a rollout;
 - DRA injects `/dev/kfd` and only the selected GPU's current DRM card/render nodes through CDI, so `/dev/dri` enumeration changes do not alter the intended mapping.
 
+AudioMuse uses the chart-managed CPU worker and does not request or mount an
+AMD GPU. AMD GPU allocation is reserved for Immich.
+
 The DRA chart is designed for Kubernetes 1.32 or newer and this deployment uses the stable `resource.k8s.io/v1` API available in K3s 1.35. The Immich chart renders `/ping` startup, readiness, and liveness probes for its ML Deployment; check it with:
 
 ```sh

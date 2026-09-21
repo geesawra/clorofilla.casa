@@ -348,6 +348,28 @@
         state: present
         src: k8s/audiomuse-database.yml
 
+    - name: Remove AudioMuse-AI ROCm worker
+      tags: navidrome,audiomuse
+      kubernetes.core.k8s:
+        state: absent
+        api_version: apps/v1
+        kind: Deployment
+        name: audiomuse-rocm-worker
+        namespace: navidrome
+        wait: true
+
+    - name: Remove AudioMuse-AI GPU cache PVCs
+      tags: navidrome,audiomuse
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item }}"
+        namespace: navidrome
+      loop:
+        - audiomuse-migraphx-cache
+        - audiomuse-miopen-cache
+
     - name: Deploy AudioMuse-AI ingress
       tags: navidrome,audiomuse
       kubernetes.core.k8s:
