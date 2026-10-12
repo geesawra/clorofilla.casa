@@ -1,0 +1,58 @@
+---
+- name: Find the generated GPU claim status
+  ansible.builtin.set_fact:
+    immich_gpu_claim_statuses: >-
+      {{ immich_gpu_pod.status.resourceClaimStatuses | default([]) |
+      selectattr('name', 'equalto', 'gpu') | list }}
+
+- name: Verify the generated GPU claim name is available
+  ansible.builtin.assert:
+    that:
+      - immich_gpu_claim_statuses | length == 1
+      - immich_gpu_claim_statuses[0].resourceClaimName | default('') | length > 0
+    fail_msg: "Refusing GPU recovery without exactly one named generated GPU claim."
+
+- name: Find the generated Immich GPU claim
+  kubernetes.core.k8s_info:
+    api_version: resource.k8s.io/v1
+    kind: ResourceClaim
+    namespace: immich
+    name: '{{ immich_gpu_claim_statuses[0].resourceClaimName }}'
+  register: immich_gpu_claim
+
+- name: Verify the GPU claim belongs to the failed Immich pod
+  ansible.builtin.assert:
+    that:
+      - immich_gpu_claim.resources | length == 1
+      - >-
+        immich_gpu_claim.resources[0].metadata.ownerReferences | default([]) |
+        selectattr('kind', 'equalto', 'Pod') |
+        selectattr('uid', 'equalto', immich_gpu_pod.metadata.uid) |
+        list | length == 1
+    fail_msg: "Refusing GPU recovery for a missing or non-pod-owned ResourceClaim."
+
+- name: Replace the Immich pod with missing AMD CDI devices
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: Pod
+    namespace: immich
+    name: '{{ immich_gpu_pod.metadata.name }}'
+    delete_options:
+      preconditions:
+        uid: '{{ immich_gpu_pod.metadata.uid }}'
+        resourceVersion: '{{ immich_gpu_pod.metadata.resourceVersion }}'
+    wait: true
+    wait_timeout: 120
+
+# Do not delete claims manually: the pod's owner reference triggers collection.
+- name: Wait for the old generated GPU claim to be collected
+  kubernetes.core.k8s_info:
+    api_version: resource.k8s.io/v1
+    kind: ResourceClaim
+    namespace: immich
+    name: '{{ immich_gpu_claim.resources[0].metadata.name }}'
+  register: immich_gpu_old_claim
+  until: immich_gpu_old_claim.resources | length == 0
+  retries: 60
+  delay: 2

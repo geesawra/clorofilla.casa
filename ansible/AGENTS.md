@@ -81,14 +81,27 @@ Deployed via `ansible/3_monitoring.yml`. Components:
 |-----------|-------|------|---------|
 | **node_exporter** | Docker container on node | 9100 | Host metrics (CPU, RAM, disk, hwmon temps/fans/voltages) |
 | **kube-state-metrics** | K8s Deployment in `monitoring` namespace | 8080 | K8s object state (pods, deployments, PVCs, nodes) |
-| **Prometheus** | K8s Deployment in `monitoring` namespace | 9092 (LAN), 9090 (Service) | Scrapes node_exporter, kube-state-metrics, and the K3s kubelet |
+| **Prometheus** | K8s Deployment in `monitoring` namespace | 9092 (LAN), 9090 (Service) | Scrapes node_exporter, kube-state-metrics, and authenticated kubelet/cAdvisor metrics |
 
 ### Prometheus Config (`k8s/monitoring/prometheus.yml`)
 
-The local Prometheus server scrapes three targets:
+The local Prometheus server scrapes four jobs:
 - `bfg:9100` — node_exporter
 - `kube-state-metrics.monitoring.svc.cluster.local:8080` — kube-state-metrics
-- `bfg:10255` — k3s kubelet (read-only, cadvisor metrics)
+- `https://bfg:10250/metrics` — authenticated kubelet metrics
+- `https://bfg:10250/metrics/cadvisor` — container resource metrics
+
+Prometheus uses its own ServiceAccount with only `get nodes/metrics` permission
+for node `bfg`, verifies the kubelet certificate with the mounted cluster CA,
+and reads the projected ServiceAccount token. Do not re-enable port 10255,
+disable TLS verification, or grant `nodes/proxy` permission for scraping.
+
+Grafana's init container reads and preserves the existing Prometheus datasource
+UID from SQLite, using `prometheus` for a new installation. It runs
+`k8s/monitoring/prepare_dashboards.py` to generate datasource provisioning and
+normalize downloaded dashboard datasource references. Dashboard JSON is separate from provisioning YAML. The monitoring
+playbook applies content-checksum annotations so configuration changes roll out
+the affected Deployment without restarting it on every unchanged run.
 
 Prometheus data is persisted in the `prometheus-data` PVC and exposed internally through the Prometheus IngressRoute.
 

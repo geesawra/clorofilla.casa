@@ -153,8 +153,70 @@
             src: k8s/monitoring/prometheus.yml
         when: not ansible_check_mode
 
+      - name: Roll out Prometheus when its configuration changes
+        kubernetes.core.k8s:
+            state: patched
+            definition:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                    name: prometheus
+                    namespace: monitoring
+                spec:
+                    template:
+                        metadata:
+                            annotations:
+                                checksum/config: '{{ lookup("ansible.builtin.file", "k8s/monitoring/prometheus.yml") | hash("sha256") }}'
+        when: not ansible_check_mode
+
+      - name: Provision the Grafana dashboard preparation script
+        kubernetes.core.k8s:
+            state: present
+            definition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                    name: grafana-dashboard-preparer
+                    namespace: monitoring
+                data:
+                    prepare_dashboards.py: '{{ lookup("ansible.builtin.file", "k8s/monitoring/prepare_dashboards.py") }}'
+        when: not ansible_check_mode
+
       - name: Deploy Grafana
         kubernetes.core.k8s:
             state: present
+            # Replace pod lists so the old downloader and overlapping mount disappear.
+            merge_type: [merge]
             src: k8s/monitoring/grafana.yml
+        when: not ansible_check_mode
+
+      - name: Roll out Grafana when provisioning changes
+        kubernetes.core.k8s:
+            state: patched
+            definition:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                    name: grafana
+                    namespace: monitoring
+                spec:
+                    template:
+                        metadata:
+                            annotations:
+                                checksum/config: >-
+                                  {{ [lookup("ansible.builtin.file", "k8s/monitoring/grafana.yml"),
+                                  lookup("ansible.builtin.file", "k8s/monitoring/prepare_dashboards.py")] | join('') | hash("sha256") }}
+        when: not ansible_check_mode
+
+      - name: Wait for the Grafana rollout to become healthy
+        ansible.builtin.command:
+            argv:
+                - kubectl
+                - rollout
+                - status
+                - deployment/grafana
+                - --namespace
+                - monitoring
+                - --timeout=5m
+        changed_when: false
         when: not ansible_check_mode

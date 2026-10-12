@@ -143,6 +143,84 @@
             name: powertop
         when: ansible_facts['architecture'] == "x86_64"
 
+- name: Configure available TuneD on bfg
+  hosts: bfg
+  become: true
+  gather_facts: false
+  tags: tuned
+  tasks:
+      - name: Check whether TuneD administration is available
+        ansible.builtin.stat:
+            path: /usr/sbin/tuned-adm
+        register: tuned_adm
+
+      - name: Configure the balanced-battery TuneD profile
+        when: tuned_adm.stat.exists and tuned_adm.stat.executable | default(false)
+        block:
+            # tuned-adm lists profiles through the daemon, so start it first.
+            - name: Enable and start the installed TuneD service
+              ansible.builtin.systemd_service:
+                  name: tuned
+                  enabled: true
+                  state: started
+              when: not ansible_check_mode
+
+            - name: List available TuneD profiles
+              ansible.builtin.command:
+                  argv:
+                      - /usr/sbin/tuned-adm
+                      - list
+              environment:
+                  LC_ALL: C
+              register: tuned_profiles
+              changed_when: false
+              when: not ansible_check_mode
+
+            - name: Verify the balanced-battery profile is available
+              ansible.builtin.assert:
+                  that:
+                      - tuned_profiles.stdout is search('(?m)^- balanced-battery(?:\\s|$)')
+                  fail_msg: "TuneD is installed but balanced-battery is unavailable; no profile was changed."
+              when: not ansible_check_mode
+
+            - name: Read the active TuneD profile
+              ansible.builtin.command:
+                  argv:
+                      - /usr/sbin/tuned-adm
+                      - active
+              environment:
+                  LC_ALL: C
+              register: tuned_active
+              changed_when: false
+              failed_when: tuned_active.rc not in [0, 1]
+              when: not ansible_check_mode
+
+            - name: Select the balanced-battery TuneD profile
+              ansible.builtin.command:
+                  argv:
+                      - /usr/sbin/tuned-adm
+                      - profile
+                      - balanced-battery
+              changed_when: true
+              when:
+                  - not ansible_check_mode
+                  - >-
+                    tuned_active.stdout | trim != 'Current active profile: balanced-battery'
+
+            - name: Verify the selected TuneD profile
+              ansible.builtin.command:
+                  argv:
+                      - /usr/sbin/tuned-adm
+                      - active
+              environment:
+                  LC_ALL: C
+              register: tuned_selected
+              changed_when: false
+              failed_when: >-
+                tuned_selected.rc != 0 or
+                tuned_selected.stdout | trim != 'Current active profile: balanced-battery'
+              when: not ansible_check_mode
+
 - name: Harden Log Rotation for K3s and Systemd
   hosts: k3s_cluster
   become: true

@@ -1,0 +1,41 @@
+---
+- name: Find Immich GPU pods
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: immich
+    label_selectors:
+      - app.kubernetes.io/instance=immich
+      - app.kubernetes.io/name in (server,machine-learning)
+  register: immich_gpu_pods
+
+# Fresh template-backed claims regenerate CDI specs using the current devices.
+# Replaying checkpointed CDI edits can select stale DRM paths after a reboot.
+- name: Recover Immich pods with missing AMD CDI devices
+  ansible.builtin.include_tasks:
+    file: immich_gpu_recover_pod.yml
+    apply:
+      tags: immich,immich-ml
+  loop: '{{ immich_gpu_pods.resources }}'
+  loop_control:
+    loop_var: immich_gpu_pod
+    label: '{{ immich_gpu_pod.metadata.name }}'
+  when:
+    - >-
+      immich_gpu_pod.metadata.ownerReferences | default([]) |
+      selectattr('kind', 'equalto', 'ReplicaSet') | list | length == 1
+    - >-
+      immich_gpu_pod.spec.resourceClaims | default([]) |
+      selectattr('name', 'equalto', 'gpu') |
+      selectattr('resourceClaimTemplateName', 'defined') |
+      selectattr('resourceClaimTemplateName', 'in',
+      ['immich-server-raphael-gpu-v1', 'immich-ml-rx6950xt-gpu-v1']) |
+      list | length == 1
+    - >-
+      immich_gpu_pod.status.containerStatuses | default([]) |
+      selectattr('state.waiting', 'defined') |
+      selectattr('state.waiting.reason', 'equalto', 'CreateContainerError') |
+      selectattr('state.waiting.message', 'defined') |
+      selectattr('state.waiting.message', 'search',
+      'CDI device injection failed: unresolvable CDI devices k8s\.gpu\.amd\.com/gpu=') |
+      list | length > 0

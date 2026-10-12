@@ -25,7 +25,7 @@ Install these with your operating system's package manager:
 
 - Ansible Core 2.17+ (the local collection metadata requires this version)
 - `kubectl` — [install guide](https://kubernetes.io/docs/tasks/tools/)
-- `helm` and a `helm3` binary at `/usr/bin/helm3` (the AudioMuse and monitoring tasks use that explicit path)
+- `helm` and a `helm3` binary at `/usr/bin/helm3` (the monitoring tasks use that explicit path)
 - `git`, for Galaxy/source dependency installation
 - `just`, for the repository's bootstrap and deployment shortcuts
 
@@ -108,6 +108,60 @@ After `1_setup.yml` completes, your kubeconfig is at `~/.kube/config`:
 kubectl get nodes
 ```
 
+## Monitoring and Grafana
+
+Prometheus scrapes kubelet and cAdvisor over verified HTTPS on `bfg:10250`, using
+a dedicated ServiceAccount restricted to reading metrics for `bfg`. The old
+unauthenticated port 10255 is not used. Container CPU, memory, network, and
+filesystem metrics come from a separate cAdvisor job.
+
+Grafana's initializer reads the existing Prometheus datasource UID from its
+SQLite database without changing the database, and preserves it in provisioning
+and downloaded dashboards. New installations use UID `prometheus`. Downloaded
+dashboards are parsed and their Prometheus datasource references normalized
+before file provisioning; failed downloads or invalid JSON stop initialization
+rather than silently installing broken dashboards. Dashboard JSON and provider
+configuration use separate directories. Downloaded revisions still track the
+upstream `latest` version, so a future dashboard can change its metric queries.
+
+```sh
+ansible-playbook ansible/3_monitoring.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags monitoring \
+  --vault-password-file .vault_password
+```
+
+Content checksums roll out Prometheus/Grafana when their configuration changes.
+Prometheus uses a recreate rollout because its host-network port cannot be shared
+by two replicas; scraping briefly pauses during replacement. Existing Prometheus
+and Grafana PVCs are preserved. This command also runs the monitoring playbook's
+existing node-exporter and kube-state-metrics tasks.
+
+After deployment, check Prometheus targets: `node-exporter`, `kube-state-metrics`,
+`k3s-kubelet`, and `kubelet` (cAdvisor) should be up. Grafana dashboard queries
+should use the provisioned Prometheus datasource. If HTTPS scraping reports 403,
+check kubelet webhook authorization and the `prometheus-kubelet-metrics` RBAC
+binding; do not bypass TLS or grant node-proxy access as a workaround.
+
+## Host power profile
+
+The setup playbook checks for `/usr/sbin/tuned-adm` on `bfg`. If it is installed,
+it enables and starts TuneD, verifies that `balanced-battery` is available, and
+selects that profile only when it is not already active. This is the privileged
+equivalent of `sudo tuned-adm profile balanced-battery`. If TuneD is absent, the
+play is skipped without installing it; a missing profile fails explicitly.
+
+```sh
+ansible-playbook ansible/1_setup.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags tuned \
+  --vault-password-file .vault_password
+```
+
+The profile-changing commands are skipped in Ansible check mode. This selects
+`balanced-battery` explicitly; it does not automatically switch profiles when
+AC power changes.
+
 ## Immich GPU layout
 
 Immich is entirely Helm-managed. There is no production Docker ML container:
@@ -119,8 +173,53 @@ Immich is entirely Helm-managed. There is no production Docker ML container:
 - both Deployments use `maxSurge: 0`, because each DRA claim is exclusive and no spare GPU exists during a rollout;
 - DRA injects `/dev/kfd` and only the selected GPU's current DRM card/render nodes through CDI, so `/dev/dri` enumeration changes do not alter the intended mapping.
 
-AudioMuse uses the chart-managed CPU worker and does not request or mount an
-AMD GPU. AMD GPU allocation is reserved for Immich.
+AMD GPU allocation is reserved for Immich. The exclusive GPU selectors and
+zero-surge rollout settings introduced in commit `36bdede` remain unchanged.
+
+### AudioMuse removal
+
+The services playbook uninstalls AudioMuse's Helm release, removes its old ROCm
+worker and ingress, and removes the AudioMuse plugin and agent from Navidrome.
+The AudioMuse PostgreSQL cluster is hibernated, not deleted: its PVCs and data
+are retained, along with any old GPU cache PVCs. Navidrome's music and database
+are not removed. The old AudioMuse manifests are retained only for reference;
+the playbook no longer deploys them.
+
+To apply both AudioMuse removal and Immich recovery:
+
+```sh
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags audiomuse,immich \
+  --vault-password-file .vault_password
+```
+
+This changes the running services: AudioMuse stops, Navidrome rolls out to remove
+its plugin, and only Immich pods with the specific missing-AMD-CDI startup error
+are replaced. No PVCs, media, or database clusters are deleted.
+
+### GPU recovery after a node reboot
+
+AMD DRA v1.0.1 can retain prepared GPU claims while losing their claim-specific
+CDI files in `/var/run/cdi` after reboot. The services playbook checks the two
+Immich GPU workloads before the Helm upgrade. It replaces only ReplicaSet-owned
+pods in `CreateContainerError` whose message identifies an unresolved AMD CDI
+device, whose claim uses one of Immich's GPU templates, and whose generated
+claim is owned by that pod. UID and resource-version preconditions protect
+against replacing a pod that changed since inspection. The playbook waits for
+the old claim to be garbage-collected; replacement pods obtain fresh exclusive
+claims using the existing GPU selectors.
+
+This is recovery when the playbook runs, not automatic recovery at boot. Healthy
+pods are left alone. Rerun with `--tags immich` after a reboot if either GPU
+container reports this error, then run the device checks below. A conflict with
+the deletion preconditions fails safely; rerun after inspecting current state.
+
+Do not work around this by copying old CDI entries into persistent storage:
+the saved DRM paths and device numbers can change across reboots. Upstream
+tracks [the missing-file failure](https://github.com/ROCm/k8s-gpu-dra-driver/issues/75)
+and [safe cross-reboot recovery](https://github.com/ROCm/k8s-gpu-dra-driver/issues/86).
+The recovery does not manually delete claims or alter the GPU driver checkpoint.
 
 The DRA chart is designed for Kubernetes 1.32 or newer and this deployment uses the stable `resource.k8s.io/v1` API available in K3s 1.35. The Immich chart renders `/ping` startup, readiness, and liveness probes for its ML Deployment; check it with:
 
