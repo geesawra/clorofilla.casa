@@ -124,6 +124,12 @@
         state: present
         src: k8s/jackett.yml
 
+    - name: Deploy FlareSolverr for Jackett
+      tags: jackett,flaresolverr
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/flaresolverr.yml
+
     - name: Mount services share for Lidarr config
       tags: lidarr
       ansible.posix.mount:
