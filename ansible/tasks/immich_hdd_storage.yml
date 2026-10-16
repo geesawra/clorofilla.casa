@@ -1,0 +1,23 @@
+---
+- name: Inspect the verified Immich HDD copy marker
+  ansible.builtin.stat:
+    path: /mnt/main/data/photos/.immich-hdd-ready
+  delegate_to: truenas
+  become: true
+  register: immich_hdd_ready
+
+- name: Require a verified Immich HDD copy before switching mounts
+  ansible.builtin.assert:
+    that:
+      - immich_hdd_ready.stat.isreg | default(false)
+      - immich_hdd_ready.stat.size | default(0) | int > 0
+    fail_msg: >-
+      Complete the HDD migration and verification procedure in README.md,
+      including the NFS export, before enabling immich_hdd_storage_enabled.
+      The readiness marker must be created only after the final verified sync.
+
+- name: Deploy the retained Immich HDD volumes and claims
+  kubernetes.core.k8s:
+    state: present
+    src: k8s/immich_hdd_storage.yml
+  when: not ansible_check_mode

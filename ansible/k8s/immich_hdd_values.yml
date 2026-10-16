@@ -1,0 +1,33 @@
+# Applied after immich_values.yml only when immich_hdd_storage_enabled is true.
+# Keep all container paths stable: Immich stores file paths in PostgreSQL.
+server:
+  persistence:
+    existing-uploads:
+      existingClaim: previous-immich-uploads-hdd-pvc
+      globalMounts:
+        - path: /existing-uploads
+          readOnly: true
+    external:
+      existingClaim: immich-camera-photos-hdd-pvc
+      globalMounts:
+        - path: /external
+          readOnly: true
+    fast-data:
+      enabled: true
+      existingClaim: immich-data-pvc
+      globalMounts:
+        - path: /data/thumbs
+          subPath: thumbs
+        - path: /data/encoded-video
+          subPath: encoded-video
+        - path: /data/profile
+          subPath: profile
+    scratch:
+      enabled: true
+      type: emptyDir
+      globalMounts:
+        - path: /tmp
+immich:
+  persistence:
+    library:
+      existingClaim: immich-data-hdd-pvc

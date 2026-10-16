@@ -1,0 +1,104 @@
+---
+# Opt-in storage: the services playbook applies this only after the verified copy.
+# Static NFS capacities are binding metadata; they do not create dataset quotas.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-data-hdd
+spec:
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: immich
+    name: immich-data-hdd-pvc
+  nfs:
+    server: 192.168.1.155
+    path: /mnt/main/data/photos/ImmichData
+  mountOptions:
+    - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-camera-photos-hdd
+spec:
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: immich
+    name: immich-camera-photos-hdd-pvc
+  nfs:
+    server: 192.168.1.155
+    path: /mnt/main/data/photos/CameraPhotos
+  mountOptions:
+    - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: previous-immich-uploads-hdd
+spec:
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: immich
+    name: previous-immich-uploads-hdd-pvc
+  nfs:
+    server: 192.168.1.155
+    path: /mnt/main/data/photos/PreviousImmichUploads
+  mountOptions:
+    - nfsvers=3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-data-hdd-pvc
+  namespace: immich
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: immich-data-hdd
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-camera-photos-hdd-pvc
+  namespace: immich
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: immich-camera-photos-hdd
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: previous-immich-uploads-hdd-pvc
+  namespace: immich
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: previous-immich-uploads-hdd

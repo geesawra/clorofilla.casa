@@ -162,6 +162,392 @@ The profile-changing commands are skipped in Ansible check mode. This selects
 `balanced-battery` explicitly; it does not automatically switch profiles when
 AC power changes.
 
+## Immich media on HDD, previews and scratch on SSD
+
+The split is **enabled and deployed** as of 2026-10-15 (Helm revision 16).
+`immich_hdd_storage_enabled: true` in `ansible/group_vars/all/vars.yml`
+adds `immich_hdd_storage.yml` and layers `immich_hdd_values.yml` after the normal
+Helm values. The playbook first requires a nonempty
+`/mnt/main/data/photos/.immich-hdd-ready` marker on `truenas`; create that
+marker only after completing the frozen-copy verification and NFS export below.
+The marker records an operator's verification; it does not verify the media itself.
+
+The HDD dataset is `main/data/photos`, mounted at `/mnt/main/data/photos`,
+under the existing `main/data` parent. The copy script creates a new leaf
+dataset and refuses to overwrite an existing destination.
+New HDD PVs/PVCs have distinct names, explicit bindings, and `Retain` policies;
+the existing SSD resources remain available for rollback. Static NFS capacity
+requests are Kubernetes binding metadata, not physical reservations or quotas.
+
+| Container path / content | Storage after cutover |
+|---|---|
+| `/data` (managed originals and database backup files) | NAS HDD: `photos/ImmichData` |
+| `/existing-uploads` (read-only) | NAS HDD: `photos/PreviousImmichUploads` |
+| `/external` (read-only) | NAS HDD: `photos/CameraPhotos` |
+| `/data/thumbs` | Existing SSD claim, `ImmichData/thumbs` subdirectory |
+| `/data/encoded-video` | Existing SSD claim, `ImmichData/encoded-video` subdirectory |
+| `/data/profile` | Existing SSD claim, `ImmichData/profile` subdirectory |
+| `/tmp` | Disk-backed `emptyDir` on bfg's local NVMe; discarded with the pod |
+| ML `/cache` | Existing PVC on NAS SSD services dataset |
+| PostgreSQL | Existing `local-path` PVC on bfg's local NVMe |
+
+Container paths and the two external-library read-only mounts stay the same.
+No database path rewrite, restore, reimport of existing assets, or thumbnail
+regeneration is part of the storage cutover. This follows Immich's
+[custom-location layout](https://docs.immich.app/guides/custom-locations/).
+
+### Observed baseline, 2026-10-15
+
+Read-only inspection found 679.5 GiB in the photo dataset and about 214 GiB
+available on `fast`. Major consumers were CameraPhotos (210.8 GiB), previous
+uploads (197.4 GiB), encoded videos (145.7 GiB), managed uploads (65.6 GiB),
+thumbnails (22.0 GiB), and `ele30.zip` (30.8 GiB). `main` had about 6.8 TiB
+available. These are observations, not limits or expected future sizes.
+
+The source photo dataset uses NFSv4 ACLs with passthrough inheritance, while
+`main/data` uses POSIX ACLs. The newly prepared `main/data/immich` parent already
+has matching NFSv4 ACL properties. Use ZFS replication for the initial full dataset
+copy so ACLs, ownership, extended attributes, and hidden `.immich` markers
+survive. A plain `rsync -a` copy would not preserve those NFSv4 ACLs. The initial
+replica includes generated files; SSD mounts cover those copies after cutover,
+and redundant HDD copies can be removed after the rollback period.
+
+### Prepare and copy while Immich stays online
+
+The following commands are a **future migration procedure**, not a deployment
+performed by this repository. Confirm fresh capacities, healthy pools, and a
+usable independent media/database backup before starting. Keep Immich and its
+chart at their pinned versions during the migration.
+
+On bfg, save the current Helm values, release revision, deployment, and PVC/PV
+mapping in a private cutover directory. Record asset counts and representative
+working photos/videos from both external libraries. Confirm which user will own
+the later GoPro upload. Pause other NAS workflows that could write these files
+during the final cutover.
+
+The standalone script [scripts/copy_immich_storage.py](scripts/copy_immich_storage.py)
+uses only Python 3.11+, ZFS, and rsync, all already present on the NAS. It accepts
+any destination pool/parent; only the new leaf dataset is created. It checks
+pool health, space, source/destination identity, and snapshot GUIDs. It never
+forces a receive, deletes files/snapshots, stops services, or switches mounts.
+TrueNAS's `/mnt` pool altroot is handled by inheriting the destination mountpoint.
+
+From the repository root, copy the script to the NAS:
+
+```sh
+scp -F /dev/null scripts/copy_immich_storage.py \
+  truenas_admin@192.168.1.155:/tmp/copy_immich_storage.py
+```
+
+On the NAS, preview and then start the initial copy in a persistent terminal
+session. Keep the new child dataset unexported. Receiving the full stream
+creates it, preserving NFSv4 ACLs and all source files, including ZIP archives.
+
+```sh
+sudo python3 /tmp/copy_immich_storage.py seed \
+  --destination main/data/photos --dry-run
+sudo python3 /tmp/copy_immich_storage.py seed \
+  --destination main/data/photos
+```
+
+This first copy is about 680 GiB. Verbose ZFS output reports transfer progress.
+The destination stays unmounted with `canmount=noauto`; Immich remains online
+on its existing storage. The script retains the source `immich-hdd-seed`
+snapshot as the incremental anchor. If a transfer fails, inspect the error
+before retrying; seed refuses to overwrite an existing destination. The script
+also refuses source/destination child datasets, overlapping mounts, and an
+encrypted source requiring a separate replication policy.
+
+For a different destination, replace `--destination` consistently and update the
+three HDD PV paths plus the readiness marker path in the Ansible preflight to
+match its effective mountpoint. Do not enable the overlay with mismatched paths.
+
+### Freeze, verify, and switch mounts
+
+Schedule an Immich outage for the final receive, native ZFS verification, NFS
+checks, and mount switch. The optional full file reread can take hours on HDDs.
+
+On bfg, stop the server and wait until every Immich server pod has terminated:
+
+```bash
+kubectl scale deployment/immich-server --namespace immich --replicas=0
+kubectl get pods --namespace immich \
+  --selector=app.kubernetes.io/instance=immich,app.kubernetes.io/name=server
+```
+
+With all writers paused, create a fresh logical database backup on bfg. The
+database remains running; its existing local storage is not moved.
+
+```bash
+set -euo pipefail
+umask 077
+immich_cutover_dir="$HOME/immich-hdd-cutover"
+mkdir -p "$immich_cutover_dir"
+immich_database_name="$(kubectl get secret immich-database-app --namespace immich \
+  -o jsonpath='{.data.dbname}' | base64 --decode)"
+kubectl exec --namespace immich immich-database-1 --container postgres -- \
+  pg_dump --username=postgres --dbname="$immich_database_name" --clean --if-exists |
+  gzip > "$immich_cutover_dir/database-before-hdd.sql.gz"
+gzip --test "$immich_cutover_dir/database-before-hdd.sql.gz"
+```
+
+Preserve that backup separately as well. On the NAS, with all writers stopped,
+run the incremental copy and native verification:
+
+```sh
+sudo python3 /tmp/copy_immich_storage.py sync \
+  --destination main/data/photos --writers-stopped
+sudo python3 /tmp/copy_immich_storage.py verify \
+  --destination main/data/photos
+```
+
+`--writers-stopped` is the operator's confirmation, not a command to stop Immich.
+The incremental receive requires the destination to remain unmounted. It creates
+a uniquely named `immich-hdd-cutover-...` snapshot and uses the newest matching
+copy snapshot as its incremental anchor. Both pipeline exit statuses are checked.
+No forced rollback or overwriting of destination changes is performed.
+
+Verification mounts the destination, compares snapshot GUIDs and ACL properties,
+checks all six Immich marker files, and checks that the destination is unchanged
+since replication. For a final sync, it also checks that the source stayed frozen.
+ZFS send/receive validates stream checksums; a second full reread is optional:
+
+```sh
+sudo python3 /tmp/copy_immich_storage.py verify \
+  --destination main/data/photos --full-checksum
+```
+
+That option additionally runs rsync with checksums, metadata comparison,
+`--dry-run`, and `--delete`. The delete flag only reports extra destination files;
+the comparison never modifies files. Keep writers stopped until it finishes.
+During the actual cutover, the additional full reread was stopped to limit the
+outage; it was not a completed validation. Matching final snapshot GUIDs, frozen
+filesystems, ACLs, marker files, and real NFS read/write probes passed.
+
+Check effective NFSv4 permissions on representative folders and confirm all six
+Immich subdirectories retain their `.immich` markers. After successful final
+verification, make the dataset mount automatically on subsequent NAS boots:
+
+```sh
+sudo zfs set canmount=on main/data/photos
+```
+
+Through the TrueNAS UI/API, add an NFS export of `/mnt/main/data/photos` for
+`192.168.1.221`, matching the existing photo export's identity mapping and
+access settings. Keep the existing SSD exports. On bfg, test a temporary mount
+and verify reads of both external libraries and effective write permissions
+for the Immich server identity in `ImmichData`; unmount the test mount afterward.
+
+Only then, on the NAS, record readiness:
+
+```bash
+printf '%s\n' 'immich-hdd-storage-v1: frozen copy and NFS verified' |
+  sudo -n tee /mnt/main/data/photos/.immich-hdd-ready >/dev/null
+```
+
+On the control machine, persist `immich_hdd_storage_enabled: true` in
+`ansible/group_vars/all/vars.yml`, then run:
+
+```sh
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags immich --vault-password-file .vault_password
+```
+
+The Helm upgrade starts the server again. Before resuming client uploads, check
+the pod's actual volume mounts, storage-integrity logs, existing originals and
+previews, external-library assets, albums, faces, and video playback. Upload one
+test asset and verify its original is on HDD and its generated previews are on
+SSD. Check the GPU claims and realtime playback after the rollout.
+
+### Import the GoPro cloud archives into an album
+
+After the storage cutover passes validation, extract and **upload through the
+Immich CLI** into one album named **GoPro Cloud**. Extraction alone does not
+complete the import. Use a staging folder outside `CameraPhotos`,
+`PreviousImmichUploads`, and `ImmichData`, so an external-library scan cannot
+index the staging files before the managed upload.
+
+The six `CameraPhotos/GoProDump/GoPro-*.zip` archives contain 148 MP4 videos and
+6 JPEG photos (154 entries, 189.3 GiB total), with no repeated filenames. ZIP
+timestamps appear to be export timestamps, so retain embedded camera metadata.
+`ele30.zip` contains 770 Fujifilm RAW photos and is outside this GoPro import.
+
+The GoPro import **completed on 2026-10-15 by 21:03 CEST**. All six archives
+passed verification: 154 unique assets (148 videos and 6 photos, 189.3 GiB) are
+in the `GoPro Cloud` album (`8f176147-f783-4822-92c8-93469af55ebb`). A fresh
+check on 2026-10-16 confirmed every server checksum, album membership, and HDD
+original size. All six extraction directories were removed after verification,
+and the NAS service exited with status 0. After the authorized SSD cleanup on
+2026-10-16, the ZIPs remain at
+`/mnt/main/data/photos/CameraPhotos/GoProDump`; their old SSD copies were
+removed. Import manifests retain the original SSD source paths as provenance.
+
+The completed run used `scripts/import_gopro_cloud.py` on the NAS. It read the
+ZIP copies on SSD, staged one archive at a time outside the external libraries,
+and ran the
+[official Immich CLI](https://docs.immich.app/features/command-line-interface/#usage)
+in Docker. The pinned 3.1.0 image matches the server. All files go into the explicit
+`GoPro Cloud` album. Keep the CLI's default client hashing and deduplication
+enabled, and upload one file at a time. A previous attempt with two concurrent
+large uploads and `--skip-hash` coincided with failed server health probes and
+a restart; a small photo test did not reveal that failure. Extraction also
+computes SHA-1, and the script checks the server checksum before cleanup.
+
+The largest batch is 62.1 GiB. The script requires another 64 GiB of free SSD
+headroom before extraction. Managed originals go to HDD through the live Immich
+mounts, while thumbnails and encoded videos remain on SSD. Reserve another
+189.3 GiB on HDD for uploads and allow SSD headroom for generated videos.
+
+Install both `import_gopro_cloud.py` and `run_gopro_cloud_import.sh` in the same
+directory on the NAS. Save the account API key privately with mode 600, outside
+the repository. Run the shell runner as root:
+
+```sh
+sudo install -d -m 700 /mnt/fast/1tb/immich-import-staging/GoProCloud
+sudo systemd-run --unit=immich-gopro-import --collect \
+  -p Type=exec -p UMask=0077 \
+  -p StandardOutput=append:/mnt/fast/1tb/immich-import-staging/GoProCloud/import.log \
+  -p StandardError=append:/mnt/fast/1tb/immich-import-staging/GoProCloud/import.log \
+  /bin/bash /tmp/run_gopro_cloud_import.sh \
+  --api-key-file /run/immich-import-api-key
+```
+
+The default paths are:
+
+- ZIPs: `/mnt/main/data/photos/CameraPhotos/GoProDump`
+- Staging: `/mnt/fast/1tb/immich-import-staging/GoProCloud`
+- Verification of HDD originals: `/mnt/main/data/photos`
+
+ZIP reads validate CRCs and compute SHA-1 while extracting. The initial batch gets a CLI
+dry run; a real archive photo tests the first managed upload. Later batches
+reuse that validation and avoid redundant dry-run hashing. After uploading,
+the script matches every input checksum to a live asset owned by the account,
+checks its original exists on HDD with the expected size, and checks its album
+membership. It then removes only that batch's extracted staging files. Original
+ZIPs are retained on HDD. Private manifests under `.manifests` permit
+resuming with the same command; failures retain staging for investigation.
+The shell runner starts a fresh Python worker after extraction, each CLI call,
+and verification. The import is launched as a transient systemd service, so it can continue
+launching workers independently of the SSH session. Detached SSH jobs previously
+failed to launch Docker with `ENOSYS` after the initiating session ended. The
+SSH-launched process had a seccomp filter; the PID-1-managed service has none. Durable checkpoints
+prevent repeated extraction or successful uploads. A runner lock prevents
+overlapping invocations; actual errors stop with a `FAILED` line in the log.
+
+The importer uses the LAN address for bfg while preserving the HTTPS hostname
+and certificate verification. Credentials enter Docker through environment
+variables, never command-line values or import logs. The import service is `immich-gopro-import.service`; its retained log is
+`/mnt/fast/1tb/immich-import-staging/GoProCloud/import.log` on the NAS.
+
+Reconcile all 154 entries against unique assets and duplicates. Byte-identical
+inputs may produce fewer unique album assets. Inspect capture dates and play
+representative long/chaptered videos after processing finishes.
+
+### Rollback and reclaim space
+
+The first real GoPro upload passed end-to-end validation: its original is on
+HDD, both preview and thumbnail are on SSD, and its embedded capture date
+(2022-10-28) was recovered instead of the ZIP export date. The background
+comparison of the immutable migration snapshots also passed for file inventory,
+sizes, timestamps, ownership, permissions, and links.
+
+The pre-cutover SQL backup and rollback metadata are retained on bfg under
+`/home/geesawra/immich-hdd-cutover-20261015/`. The backup passed gzip verification;
+its SHA-256 is `aa051ecc556c57c8c5744cd82a8188a39476799d9c75e8d07f4b06ca0d339ea6`.
+A fresh pre-cleanup dump is retained beside it as
+`database-before-ssd-reclaim-20261016.sql.gz` (149,052,998 bytes, mode 600), with
+SHA-256 `ada8df5d6a8f9c905dcd0c5bcaa7a97c4997fb5752cc562e7aa5039aba0ba319`.
+It passed gzip verification.
+
+**SSD space reclamation completed on 2026-10-16 at 10:50 CEST**, following the
+owner's authorization. The retired SSD originals had no changes since the final
+copy snapshot, and both matching HDD snapshot GUIDs were checked before removal.
+The cleanup reclaimed **507.26 GiB**, leaving approximately **721.01 GiB
+available**; the `fast` pool is now **19% used**.
+
+Only these redundant paths under `/mnt/fast/1tb/photos` were removed:
+
+- `CameraPhotos`
+- `PreviousImmichUploads`
+- `ImmichData/upload`, `ImmichData/library`, and `ImmichData/backups`
+- `ele30.zip`
+
+The live SSD `ImmichData/thumbs`, `ImmichData/encoded-video`, `ImmichData/profile`,
+and their marker files are preserved, as is `ImmichMl`. All PV/PVC objects and
+the SSD NFS exports remain available for the active preview mounts. The SMB
+share named `photos` now points to `/mnt/main/data/photos`; Samba's
+effective configuration was checked after the switch.
+
+Both SSD migration snapshots (`immich-hdd-seed` and
+`immich-hdd-cutover-20261015T163444726533Z`) were removed after live application
+checks passed. Their HDD counterparts remain, along with the new snapshot
+`main/data/photos@immich-before-ssd-reclaim-20261016T084847Z`. HDD originals
+and ZIPs remain intact. No off-NAS media backup was verified during this work.
+
+Checks after file removal and snapshot release confirmed healthy `fast` and
+`main` pools, twelve production original reads across all three media mounts,
+six Immich markers, SSD previews, HTTP thumbnail access, video range playback,
+and healthy Immich pods without an additional restart. The audit is retained on
+the NAS at `/mnt/main/data/immich/.maintenance/ssd-reclaim-20261016.json`.
+
+A mount rollback now requires copying current HDD media back to SSD with
+sufficient capacity before changing the storage flag or claims. Keep the current
+database; the pre-cutover SQL dump does not contain subsequent uploads or edits.
+
+Backup coverage should include HDD originals, both external libraries, ZIPs,
+the SSD profile folder, and PostgreSQL. Monitor NAS `fast` and `main` plus bfg's
+local scratch filesystem separately. Immich's main free-space display follows
+`/data` and cannot serve as the SSD-preview capacity alert.
+
+## NAS SSD replacement and dataset layout
+
+On 2026-10-16 the Lexar 4 TB SSD was installed internally over native NVMe.
+Its existing `torrents` pool was renamed to `fast`, and `data` was renamed to
+`torrents`. The former SSD's complete `1tb` subtree was restored from verified
+HDD staging before restoring the `/mnt/fast/1tb` shares.
+
+| Dataset | Purpose and capacity policy |
+|---|---|
+| `fast/1tb` | Shared `quota=1T` and `reservation=1T` for photos and services (1 TiB) |
+| `fast/1tb/photos` | Immich previews, encoded video, profile data, and ML-related files |
+| `fast/1tb/services` | Service configuration and persistent data |
+| `fast/torrents/mine` | Existing personal torrent configuration and files |
+| `fast/torrents/others` | Existing shared torrent configuration and files |
+| `main/data/photos` | HDD managed originals, external libraries, and archives |
+
+The existing 3 TiB quota on `fast/torrents` is retained. The `1tb` reservation
+protects its capacity from torrent growth; it also counts toward the parent
+pool's reported used space before that capacity contains files.
+
+The HDD photos dataset was renamed from `main/data/immich/photos` to
+`main/data/photos` within `main`, preserving dataset/snapshot identities and
+permissions. Its inherited `exec=off` value was made explicit before moving it.
+The NFS and SMB share paths, Kubernetes NFS volumes, importer default, and
+readiness-marker path use the new location. Immich's three static HDD PV/PVC
+bindings were recreated with `Retain`, keeping their names and existing media;
+container paths and PostgreSQL file paths are unchanged.
+
+The SSD passed a 32 GiB direct write/read verification, a full scrub of its
+existing 389 GiB with zero errors, and the staged restore. Restore checks
+included snapshot GUIDs, dataset properties, complete service-file checksums,
+and sampled photo content. Both `fast` and `main` remained healthy.
+
+The temporary recovery tree `main/fast-staging-20261016T085900Z` was removed
+after restore verification and live Immich media reads, reclaiming about
+164 GiB. Before removal, 44 audit/configuration files were copied and
+checksum-verified under `/mnt/main/.recovery/ssd-migration-20261016`, a private
+directory rather than another dataset. Protected TrueNAS configuration exports
+and audit copies are also retained off the NAS. `layout-current.json` records
+current paths; older audit records retain their original path strings. The
+removed SSD is not relied upon as a rollback copy.
+
+Both Transmission deployments were restored to one replica. The shared
+instance's `settings.json` contained one byte and prevented daemon startup;
+its configuration was archived privately before restoring the existing
+container image's default settings. Torrent and resume records were preserved;
+the personal and shared instances loaded 129 and 202 torrents, respectively.
+
 ## Immich GPU layout
 
 Immich is entirely Helm-managed. There is no production Docker ML container:

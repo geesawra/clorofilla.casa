@@ -96,7 +96,7 @@ spec:
                 - name: music-mine
                   nfs:
                       server: 192.168.1.155
-                      path: /mnt/torrents/data/mine/files/complete
+                      path: /mnt/fast/torrents/mine/files/complete
                       readOnly: true
 ---
 kind: Service

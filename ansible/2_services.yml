@@ -256,6 +256,14 @@
           tags: immich,immich-ml
       when: not ansible_check_mode
 
+    - name: Prepare Immich HDD storage after the verified copy
+      tags: immich,immich-ml
+      ansible.builtin.include_tasks:
+        file: tasks/immich_hdd_storage.yml
+        apply:
+          tags: immich,immich-ml
+      when: immich_hdd_storage_enabled | default(false) | bool
+
     - name: Deploy Immich through Helm
       tags: immich,immich-ml
       kubernetes.core.helm:
@@ -265,8 +273,10 @@
         release_namespace: immich
         wait: true
         wait_timeout: 10m
-        values_files:
-          - k8s/immich_values.yml
+        values_files: >-
+          {{ ['k8s/immich_values.yml'] +
+             (['k8s/immich_hdd_values.yml']
+              if immich_hdd_storage_enabled | default(false) | bool else []) }}
 
     - name: Find the Immich ML pod
       tags: immich,immich-ml

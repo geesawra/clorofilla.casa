@@ -53,16 +53,12 @@ spec:
                 - name: config
                   nfs:
                       server: 192.168.1.155
-                      path: /mnt/torrents/data/mine/config
-                      mountOptions:
-                          - nfsvers=3
+                      path: /mnt/fast/torrents/mine/config
 
                 - name: files
                   nfs:
                       server: 192.168.1.155
-                      path: /mnt/torrents/data/mine/files
-                      mountOptions:
-                          - nfsvers=3
+                      path: /mnt/fast/torrents/mine/files
 ---
 kind: Service
 apiVersion: v1

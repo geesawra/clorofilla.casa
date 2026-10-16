@@ -63,20 +63,14 @@ spec:
                   nfs:
                       server: 192.168.1.155
                       path: /mnt/fast/1tb/services/lidarr/config
-                      mountOptions:
-                          - nfsvers=3
                 - name: music
                   nfs:
                       server: 192.168.1.155
-                      path: /mnt/torrents/data/mine/files/complete
-                      mountOptions:
-                          - nfsvers=3
+                      path: /mnt/fast/torrents/mine/files/complete
                 - name: downloads
                   nfs:
                       server: 192.168.1.155
-                      path: /mnt/torrents/data/mine/files
-                      mountOptions:
-                          - nfsvers=3
+                      path: /mnt/fast/torrents/mine/files
 ---
 kind: Service
 apiVersion: v1
