@@ -3,6 +3,13 @@ kind: IngressRoute
 metadata:
   name: argocd-server
   namespace: argocd
+  annotations:
+    gethomepage.dev/description: GitOps deployment management
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Infrastructure
+    gethomepage.dev/href: https://argocd.clorofilla.casa
+    gethomepage.dev/icon: argocd.png
+    gethomepage.dev/name: Argo CD
 spec:
   entryPoints:
     - websecure

@@ -196,3 +196,78 @@ def test_navidrome_no_longer_installs_or_uses_audiomuse():
     env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
     agents = next(item["value"] for item in env if item["name"] == "ND_AGENTS")
     assert agents == "lastfm,spotify,deezer"
+
+
+def test_all_traefik_routes_are_discoverable_by_homepage():
+    host_pattern = re.compile(r"Host\(`([^`]+)`\)")
+    route_count = 0
+
+    for path in (ROOT / "ansible/k8s").rglob("*.yml"):
+        for document in yaml.safe_load_all(path.read_text()):
+            if not document or document.get("kind") != "IngressRoute":
+                continue
+            route_count += 1
+            annotations = document["metadata"].get("annotations", {})
+            assert annotations.get("gethomepage.dev/enabled") == "true", path
+            assert annotations.get("gethomepage.dev/name"), path
+            assert annotations.get("gethomepage.dev/group"), path
+            href = annotations.get("gethomepage.dev/href", "")
+            assert href.startswith("https://"), path
+            assert href.removeprefix("https://") in {
+                host
+                for route in document["spec"]["routes"]
+                for host in host_pattern.findall(route.get("match", ""))
+            }, path
+
+    assert route_count > 0
+
+
+def test_homepage_uses_cluster_traefik_discovery_with_read_only_rbac():
+    manifest = list(yaml.safe_load_all((ROOT / "ansible/k8s/homepage.yml").read_text()))
+    config_map = next(document for document in manifest if document["kind"] == "ConfigMap")
+    kubernetes_config = yaml.safe_load(config_map["data"]["kubernetes.yaml"])
+    assert kubernetes_config == {
+        "mode": "cluster",
+        "ingress": False,
+        "traefik": True,
+    }
+
+    cluster_role = next(document for document in manifest if document["kind"] == "ClusterRole")
+    assert cluster_role["rules"] == [
+        {
+            "apiGroups": ["traefik.io"],
+            "resources": ["ingressroutes"],
+            "verbs": ["get", "list"],
+        }
+    ]
+
+    deployment = next(document for document in manifest if document["kind"] == "Deployment")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "ghcr.io/gethomepage/homepage:v2.5.0"
+    assert container["env"][1]["value"] == (
+        "$(MY_POD_IP):3000,home.clorofilla.casa"
+    )
+    pod_spec = deployment["spec"]["template"]["spec"]
+    init_container = pod_spec["initContainers"][0]
+    assert init_container["image"] == container["image"]
+    assert init_container["args"] == [
+        'for file in /config-source/*; do cp -L "$file" /app/config/; done'
+    ]
+    volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+    assert volumes["homepage-config"]["emptyDir"] == {}
+    assert volumes["homepage-config-source"]["configMap"]["name"] == "homepage"
+    assert container["volumeMounts"] == [
+        {"name": "homepage-config", "mountPath": "/app/config"}
+    ]
+
+    tasks = load("ansible/2_services.yml")[1]["tasks"]
+    deploy = next(task for task in tasks if task["name"] == "Deploy Homepage service catalog")
+    assert deploy["kubernetes.core.k8s"]["src"] == "k8s/homepage.yml"
+    assert "homepage" in deploy["tags"]
+    assert deploy["when"] == "not ansible_check_mode"
+    rollout = next(
+        task
+        for task in tasks
+        if task["name"] == "Roll out Homepage when its configuration changes"
+    )
+    assert rollout["when"] == "not ansible_check_mode"

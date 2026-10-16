@@ -79,6 +79,13 @@ kind: IngressRoute
 metadata:
     name: truenas
     namespace: reverse-proxy
+    annotations:
+        gethomepage.dev/description: NAS management
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Infrastructure
+        gethomepage.dev/href: https://truenas.clorofilla.casa
+        gethomepage.dev/icon: truenas.png
+        gethomepage.dev/name: TrueNAS
 spec:
     entryPoints:
         - websecure
@@ -96,6 +103,12 @@ kind: IngressRoute
 metadata:
     name: zerobyte
     namespace: reverse-proxy
+    annotations:
+        gethomepage.dev/description: Backup management
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Infrastructure
+        gethomepage.dev/href: https://backups.clorofilla.casa
+        gethomepage.dev/name: Backups
 spec:
     entryPoints:
         - websecure
@@ -113,6 +126,13 @@ kind: IngressRoute
 metadata:
     name: bfg
     namespace: reverse-proxy
+    annotations:
+        gethomepage.dev/description: Host management
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Infrastructure
+        gethomepage.dev/href: https://bfg.clorofilla.casa
+        gethomepage.dev/icon: cockpit.png
+        gethomepage.dev/name: Cockpit
 spec:
     entryPoints:
         - websecure

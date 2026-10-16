@@ -84,6 +84,13 @@ kind: IngressRoute
 metadata:
     name: transmission-others-route
     namespace: torrents
+    annotations:
+        gethomepage.dev/description: Shared torrent downloads
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Media
+        gethomepage.dev/href: https://transmission-others.clorofilla.casa
+        gethomepage.dev/icon: transmission.png
+        gethomepage.dev/name: Transmission (others)
 spec:
     entryPoints:
         - websecure

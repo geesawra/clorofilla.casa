@@ -466,3 +466,27 @@
       kubernetes.core.k8s:
         state: present
         src: k8s/reverse-proxy.yml
+
+    - name: Deploy Homepage service catalog
+      tags: homepage
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/homepage.yml
+      when: not ansible_check_mode
+
+    - name: Roll out Homepage when its configuration changes
+      tags: homepage
+      kubernetes.core.k8s:
+        state: patched
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: homepage
+            namespace: homepage
+          spec:
+            template:
+              metadata:
+                annotations:
+                  checksum/config: '{{ lookup("ansible.builtin.file", "k8s/homepage.yml") | hash("sha256") }}'
+      when: not ansible_check_mode

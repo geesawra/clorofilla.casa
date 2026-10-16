@@ -74,6 +74,13 @@ kind: IngressRoute
 metadata:
     name: jackett-route
     namespace: torrents
+    annotations:
+        gethomepage.dev/description: Torrent indexer manager
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Media
+        gethomepage.dev/href: https://jackett.clorofilla.casa
+        gethomepage.dev/icon: jackett.png
+        gethomepage.dev/name: Jackett
 spec:
     entryPoints:
         - websecure

@@ -92,6 +92,13 @@ kind: IngressRoute
 metadata:
     name: lidarr-route
     namespace: torrents
+    annotations:
+        gethomepage.dev/description: Music collection manager
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Media
+        gethomepage.dev/href: https://lidarr.clorofilla.casa
+        gethomepage.dev/icon: lidarr.png
+        gethomepage.dev/name: Lidarr
 spec:
     entryPoints:
         - websecure

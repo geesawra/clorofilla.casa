@@ -119,6 +119,13 @@ kind: IngressRoute
 metadata:
     name: navidrome-route
     namespace: navidrome
+    annotations:
+        gethomepage.dev/description: Music streaming
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Music
+        gethomepage.dev/href: https://navidrome.clorofilla.casa
+        gethomepage.dev/icon: navidrome.png
+        gethomepage.dev/name: Navidrome
 spec:
     entryPoints:
         - websecure

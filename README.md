@@ -90,10 +90,39 @@ ansible-playbook ansible/2_services.yml -i ansible/inventory/hosts.yml --vault-p
 # 3 — Monitoring (Docker node_exporter, Prometheus, and Grafana)
 ansible-playbook ansible/3_monitoring.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
 ```
+
+## Homepage service directory
+
+The cluster service directory is available at
+[`https://home.clorofilla.casa`](https://home.clorofilla.casa). The Homepage
+deployment discovers services from Traefik `IngressRoute` annotations. Every
+route in the repository opts in with `gethomepage.dev/enabled: "true"`, `href`,
+`name`, and `group`; new routes need the same metadata. The dashboard includes
+the service links, monitoring tools, infrastructure proxies, and itself.
+Internal-only services without a Traefik route remain unlisted.
+
+Homepage's service account can read Traefik `IngressRoute` resources cluster
+wide, but cannot read pods, nodes, or secrets. The page follows the cluster's
+existing Tailscale-only access model. Deploy or update it independently with:
+
+```sh
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags homepage \
+  --vault-password-file .vault_password
+```
 Lidarr is deployed in the existing `torrents` namespace at
 `https://lidarr.clorofilla.casa`. Its configuration is persisted on the NAS;
 configure the Redacted indexer and any download clients manually in the
 Lidarr web UI. Jackett remains in place.
+
+For indexers that require Cloudflare challenges, FlareSolverr runs in a
+separate pod with an internal-only Service. In Jackett settings, set
+**FlareSolverr API URL** to
+`http://flaresolverr-service.torrents.svc.cluster.local:8191` and leave
+**FlareSolverr Max Timeout (ms)** at its default. The solver has no external
+route; configuring the URL in Jackett is required after deployment. Deploy
+both with the `jackett` tag.
 
 To deploy only Lidarr:
 

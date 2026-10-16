@@ -163,6 +163,13 @@ kind: IngressRoute
 metadata:
     name: immich-route
     namespace: immich
+    annotations:
+        gethomepage.dev/description: Photos and videos
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Photos
+        gethomepage.dev/href: https://photos.clorofilla.casa
+        gethomepage.dev/icon: immich.png
+        gethomepage.dev/name: Immich
 spec:
     entryPoints:
         - websecure

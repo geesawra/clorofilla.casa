@@ -163,6 +163,13 @@ kind: IngressRoute
 metadata:
     name: prometheus-route
     namespace: monitoring
+    annotations:
+        gethomepage.dev/description: Metrics and alerting
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Monitoring
+        gethomepage.dev/href: https://prometheus.clorofilla.casa
+        gethomepage.dev/icon: prometheus.png
+        gethomepage.dev/name: Prometheus
 spec:
     entryPoints:
         - websecure

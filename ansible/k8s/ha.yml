@@ -238,6 +238,13 @@ kind: IngressRoute
 metadata:
     name: home-assistant-route
     namespace: home-automation
+    annotations:
+        gethomepage.dev/description: Home automation
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Home
+        gethomepage.dev/href: https://ha.clorofilla.casa
+        gethomepage.dev/icon: home-assistant.png
+        gethomepage.dev/name: Home Assistant
 spec:
     entryPoints:
         - websecure

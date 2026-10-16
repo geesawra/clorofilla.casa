@@ -3,6 +3,12 @@ kind: IngressRoute
 metadata:
   name: audiomuse-route
   namespace: navidrome
+  annotations:
+    gethomepage.dev/description: AI music discovery
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Music
+    gethomepage.dev/href: https://audiomuse.clorofilla.casa
+    gethomepage.dev/name: AudioMuse AI
 spec:
   entryPoints:
     - websecure
