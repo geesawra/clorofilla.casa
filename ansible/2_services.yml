@@ -182,6 +182,27 @@
         state: present
         src: k8s/transmission_others.yml
 
+    - name: Deploy torrent search
+      tags: ts,torrent-search
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/ts.yml
+
+    - name: Wait for torrent search deployment
+      tags: ts,torrent-search
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: ts
+        namespace: torrents
+      register: ts_deployment
+      until:
+        - ts_deployment.resources | length == 1
+        - ts_deployment.resources[0].status.availableReplicas | default(0) | int > 0
+      retries: 30
+      delay: 5
+      when: not ansible_check_mode
+
     - name: Deploy AMD GPU DRA driver
       tags: amd-gpu,immich,immich-ml
       kubernetes.core.helm:

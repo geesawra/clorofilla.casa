@@ -40,7 +40,8 @@ clorofilla.casa/
 │   │   ├── traefik_porkbun.yml
 │   │   ├── transmission.yml
 │   │   ├── transmission_others.yml
-│   │   └── trmnl.yml
+│   │   ├── trmnl.yml
+│   │   └── ts.yml
 │   ├── PLAN.md              # Architecture plans & decisions
 │   └── AGENTS.md            # This file
 ├── .gitignore

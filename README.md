@@ -124,6 +124,48 @@ separate pod with an internal-only Service. In Jackett settings, set
 route; configuring the URL in Jackett is required after deployment. Deploy
 both with the `jackett` tag.
 
+### Torrent search
+
+The `ts` service runs in the `torrents` namespace at
+[`https://ts.clorofilla.casa`](https://ts.clorofilla.casa). Its Jackett API key
+and endpoint settings live in the Kubernetes Secret `ts-config`, not in this
+repository. Create or update that Secret from a private TOML file containing
+the configuration for the service:
+
+Because `ts` shares the `torrents` namespace with its backends, use these
+in-cluster Service URLs in the TOML:
+`http://jackett-service:9117`,
+`http://transmission-service:9091/transmission/rpc`, and
+`http://transmission-others-service:9091/transmission/rpc`. This avoids routing
+backend traffic back through Traefik and the external hostnames.
+
+```sh
+kubectl create secret generic ts-config \
+  --namespace torrents \
+  --from-file=config.toml=/secure/path/ts-config.toml \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Deploy or update the workload and route with:
+
+```sh
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags ts \
+  --vault-password-file .vault_password
+kubectl rollout status deployment/ts --namespace torrents
+```
+
+The config file is mounted read-only through a `subPath`. After updating the
+Secret, restart the deployment:
+
+```sh
+kubectl rollout restart deployment/ts --namespace torrents
+```
+
+The supplied settings do not enable browser Basic Authentication, so keep
+access to this private hostname on the trusted network.
+
 To deploy only Lidarr:
 
 ```sh

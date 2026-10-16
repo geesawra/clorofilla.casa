@@ -1,0 +1,103 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts
+  namespace: torrents
+  labels:
+    app.kubernetes.io/name: ts
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ts
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: bfg
+      containers:
+        - name: ts
+          image: ghcr.io/geesawra/ts@sha256:7497405e3f5c279a98893714c9112a4b427497ca394013d9cdf1b0c51dbea714
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: config
+              mountPath: /config/config.toml
+              subPath: config.toml
+              readOnly: true
+      volumes:
+        - name: config
+          secret:
+            secretName: ts-config
+            defaultMode: 0444
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts
+  namespace: torrents
+  labels:
+    app.kubernetes.io/name: ts
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ts
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ts
+  namespace: torrents
+  annotations:
+    gethomepage.dev/description: Jackett torrent search
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Media
+    gethomepage.dev/href: https://ts.clorofilla.casa
+    gethomepage.dev/name: Torrent Search
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`ts.clorofilla.casa`)
+      priority: 10
+      services:
+        - name: ts
+          port: 8080
+  tls:
+    certResolver: default
