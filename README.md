@@ -596,10 +596,31 @@ against replacing a pod that changed since inspection. The playbook waits for
 the old claim to be garbage-collected; replacement pods obtain fresh exclusive
 claims using the existing GPU selectors.
 
-This is recovery when the playbook runs, not automatic recovery at boot. Healthy
-pods are left alone. Rerun with `--tags immich` after a reboot if either GPU
-container reports this error, then run the device checks below. A conflict with
-the deletion preconditions fails safely; rerun after inspecting current state.
+The `immich-gpu-recovery` CronJob also checks every minute, including after a
+reboot once Kubernetes can schedule Jobs. It runs without GPU allocation or
+host mounts and uses a namespace-scoped ServiceAccount that can read/delete
+pods and read GPU claims. It checks the workload labels, GPU template, claim
+ownership, and claim UID in the CDI error, then re-reads the pod and uses UID
+and resource-version deletion preconditions. Healthy pods, unrelated startup
+errors, named/shared claims, and terminating pods are left alone. Runs do not
+overlap; each run is limited to five minutes, and it waits up to 90 seconds per
+old claim for garbage collection. Changed/deleted resources are rechecked on
+the next run; other failures are logged and mark the Job failed.
+
+Deploy only the automatic recovery resources on an existing Immich installation:
+
+```sh
+ansible-playbook ansible/2_services.yml \
+  --inventory ansible/inventory/hosts.yml \
+  --tags immich-gpu-recovery
+
+kubectl get cronjob,jobs -n immich
+kubectl logs -n immich job/<recovery-job-name>
+```
+
+The deployment-time recovery remains available through `--tags immich`.
+Recovery starts fresh claims; it does not verify ML inference or transcoding.
+Use the device and health checks below after hardware or driver changes.
 
 Do not work around this by copying old CDI entries into persistent storage:
 the saved DRM paths and device numbers can change across reboots. Upstream

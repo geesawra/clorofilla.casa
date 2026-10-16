@@ -264,6 +264,27 @@
           tags: immich,immich-ml
       when: immich_hdd_storage_enabled | default(false) | bool
 
+    - name: Provision the automatic Immich GPU recovery script
+      tags: immich,immich-ml,immich-gpu-recovery
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: immich-gpu-recovery
+            namespace: immich
+          data:
+            immich_gpu_recovery.py: '{{ lookup("ansible.builtin.file", "k8s/immich_gpu_recovery.py") }}'
+      when: not ansible_check_mode
+
+    - name: Schedule automatic Immich GPU recovery
+      tags: immich,immich-ml,immich-gpu-recovery
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/immich_gpu_recovery.yml
+      when: not ansible_check_mode
+
     - name: Deploy Immich through Helm
       tags: immich,immich-ml
       kubernetes.core.helm:
