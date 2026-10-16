@@ -21,7 +21,7 @@ spec:
         kubernetes.io/hostname: bfg
       containers:
         - name: ts
-          image: ghcr.io/geesawra/ts@sha256:7497405e3f5c279a98893714c9112a4b427497ca394013d9cdf1b0c51dbea714
+          image: ghcr.io/geesawra/ts@sha256:80abb09d67d1e467f038881563bcf251c120a7ad959b224dc26916025ea2dbc6
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
