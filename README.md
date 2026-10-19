@@ -116,6 +116,17 @@ Lidarr is deployed in the existing `torrents` namespace at
 configure the Redacted indexer and any download clients manually in the
 Lidarr web UI. Jackett remains in place.
 
+### Audiobookshelf
+
+Audiobookshelf is available at
+[`https://ab.clorofilla.casa`](https://ab.clorofilla.casa). Its audiobook
+library is mounted read-only from
+`/mnt/fast/torrents/mine/files/complete/mouse`; its configuration and metadata
+use local K3s storage on `bfg` because the configuration contains a SQLite
+database. Create the initial Audiobookshelf administrator account in the web
+UI, then add `/audiobooks` as a library location. Deploy it with the
+`audiobookshelf` tag.
+
 For indexers that require Cloudflare challenges, FlareSolverr runs in a
 separate pod with an internal-only Service. In Jackett settings, set
 **FlareSolverr API URL** to

@@ -30,6 +30,7 @@ clorofilla.casa/
 │   │   ├── audiomuse-ai-ingress.yml
 │   │   ├── audiomuse-ai-values.yml
 │   │   ├── audiomuse-database.yml
+│   │   ├── audiobookshelf.yml
 │   │   ├── ha.yml
 │   │   ├── immich.yml
 │   │   ├── immich_values.yml

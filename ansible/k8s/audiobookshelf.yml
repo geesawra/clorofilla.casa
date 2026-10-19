@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: audiobookshelf-config
+    namespace: torrents
+spec:
+    storageClassName: local-path
+    accessModes:
+        - ReadWriteOnce
+    resources:
+        requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    name: audiobookshelf-metadata
+    namespace: torrents
+spec:
+    storageClassName: local-path
+    accessModes:
+        - ReadWriteOnce
+    resources:
+        requests:
+            storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: audiobookshelf-deployment
+    namespace: torrents
+    labels:
+        app: audiobookshelf
+spec:
+    replicas: 1
+    strategy:
+        type: Recreate
+    selector:
+        matchLabels:
+            app: audiobookshelf
+    template:
+        metadata:
+            labels:
+                app: audiobookshelf
+        spec:
+            nodeSelector:
+                kubernetes.io/hostname: bfg
+            containers:
+                - name: audiobookshelf-container
+                  image: ghcr.io/advplyr/audiobookshelf:2.37.1
+                  ports:
+                      - containerPort: 80
+                        protocol: TCP
+                  env:
+                      - name: TZ
+                        value: Europe/Rome
+                  volumeMounts:
+                      - mountPath: /config
+                        name: config
+                      - mountPath: /metadata
+                        name: metadata
+                      - mountPath: /audiobooks
+                        name: audiobooks
+                        readOnly: true
+            volumes:
+                - name: config
+                  persistentVolumeClaim:
+                      claimName: audiobookshelf-config
+                - name: metadata
+                  persistentVolumeClaim:
+                      claimName: audiobookshelf-metadata
+                - name: audiobooks
+                  nfs:
+                      server: 192.168.1.155
+                      path: /mnt/fast/torrents/mine/files/complete/mouse
+                      readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+    name: audiobookshelf-service
+    namespace: torrents
+spec:
+    type: ClusterIP
+    selector:
+        app: audiobookshelf
+    ports:
+        - protocol: TCP
+          name: http
+          port: 80
+          targetPort: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+    name: audiobookshelf-route
+    namespace: torrents
+    annotations:
+        gethomepage.dev/description: Audiobook library
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/group: Media
+        gethomepage.dev/href: https://ab.clorofilla.casa
+        gethomepage.dev/icon: audiobookshelf.png
+        gethomepage.dev/name: Audiobookshelf
+spec:
+    entryPoints:
+        - websecure
+    routes:
+        - kind: Rule
+          match: Host(`ab.clorofilla.casa`)
+          priority: 10
+          services:
+              - name: audiobookshelf-service
+                port: 80
+    tls:
+        certResolver: default

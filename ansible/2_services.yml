@@ -182,6 +182,12 @@
         state: present
         src: k8s/transmission_others.yml
 
+    - name: Deploy Audiobookshelf
+      tags: audiobookshelf
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/audiobookshelf.yml
+
     - name: Deploy torrent search
       tags: ts,torrent-search
       kubernetes.core.k8s:
