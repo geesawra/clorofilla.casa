@@ -11,6 +11,7 @@ metadata:
 data:
     route_by_tracker.py: |
         #!/usr/bin/env python3
+        import argparse
         import json
         import os
         import subprocess
@@ -51,7 +52,7 @@ data:
         def rpc_torrent(torrent_id):
             payload = json.dumps({
                 "method": "torrent-get",
-                "arguments": {"ids": [int(torrent_id)], "fields": ["id", "trackerStats"]},
+                "arguments": {"ids": [int(torrent_id)], "fields": ["id", "trackerStats", "downloadDir"]},
             }).encode()
 
             def request(session_id=None):
@@ -73,15 +74,41 @@ data:
             torrents = request().get("arguments", {}).get("torrents", [])
             return torrents[0] if torrents else None
 
-        torrent_id = os.environ.get("TR_TORRENT_ID", "").strip()
+        parser = argparse.ArgumentParser(description="Route completed torrents by tracker")
+        parser.add_argument("--dry-run", action="store_true", help="show the routing decision without moving data")
+        parser.add_argument("--torrent-id", help="inspect a torrent by ID (requires --dry-run)")
+        args = parser.parse_args()
+        dry_run = args.dry_run or os.environ.get("ROUTE_BY_TRACKER_DRY_RUN", "").lower() in {"1", "true", "yes"}
+        if args.torrent_id and not dry_run:
+            parser.error("--torrent-id requires --dry-run")
+
+        torrent_id = (args.torrent_id or os.environ.get("TR_TORRENT_ID", "")).strip()
         if not torrent_id.isdigit():
+            if dry_run:
+                parser.error("--dry-run requires TR_TORRENT_ID or --torrent-id")
             log("skip reason=invalid-torrent-id")
             sys.exit("Missing or invalid TR_TORRENT_ID")
 
-        tracker_urls = os.environ.get("TR_TORRENT_TRACKERS", "").replace("\n", ",").split(",")
-        hosts = tracker_hosts(tracker_urls)
+        torrent = None
+        if args.torrent_id:
+            try:
+                torrent = rpc_torrent(torrent_id)
+            except Exception as error:
+                print(f"Could not inspect torrent {torrent_id}: {type(error).__name__}", file=sys.stderr)
+                sys.exit(1)
+            if not torrent:
+                print(f"Torrent {torrent_id} was not found", file=sys.stderr)
+                sys.exit(1)
+            hosts = tracker_hosts(
+                tracker.get("announce", "")
+                for tracker in torrent.get("trackerStats", [])
+            )
+        else:
+            tracker_urls = os.environ.get("TR_TORRENT_TRACKERS", "").replace("\n", ",").split(",")
+            hosts = tracker_hosts(tracker_urls)
+
         categories = categories_for(hosts)
-        if len(categories) != 1:
+        if len(categories) != 1 and not torrent:
             try:
                 torrent = rpc_torrent(torrent_id)
                 if torrent:
@@ -91,17 +118,37 @@ data:
                     )
                     categories = categories_for(hosts)
             except Exception as error:
+                if dry_run:
+                    print(f"Could not inspect trackers for torrent {torrent_id}: {type(error).__name__}", file=sys.stderr)
+                    sys.exit(1)
                 log(f"tracker lookup failed id={torrent_id} error={type(error).__name__}")
 
         if len(categories) != 1:
-            log(f"skip id={torrent_id} reason=unmatched-or-ambiguous trackers={','.join(sorted(hosts))}")
+            message = f"skip id={torrent_id} reason=unmatched-or-ambiguous trackers={','.join(sorted(hosts))}"
+            if dry_run:
+                log(f"dry-run {message}")
+                print(f"DRY RUN: {message}")
+            else:
+                log(message)
             sys.exit(0)
 
         category = categories.pop()
         destination = f"/downloads/complete/{category}"
-        current_directory = os.path.normpath(os.environ.get("TR_TORRENT_DIR", ""))
+        current_path = os.environ.get("TR_TORRENT_DIR") or (torrent or {}).get("downloadDir", "")
+        current_directory = os.path.normpath(current_path)
         if current_directory == destination:
-            log(f"skip id={torrent_id} reason=already-routed category={category}")
+            message = f"id={torrent_id} category={category} source={current_directory} destination={destination} action=already-routed"
+            if dry_run:
+                log(f"dry-run {message}")
+                print(f"DRY RUN: {message}")
+            else:
+                log(f"skip {message}")
+            sys.exit(0)
+
+        if dry_run:
+            message = f"id={torrent_id} category={category} source={current_directory or 'unknown'} destination={destination} action=would-move"
+            log(f"dry-run {message}")
+            print(f"DRY RUN: {message}")
             sys.exit(0)
 
         try:
