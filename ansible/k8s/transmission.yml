@@ -3,6 +3,54 @@ kind: Namespace
 metadata:
     name: torrents
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: transmission-tracker-sort-script
+    namespace: torrents
+data:
+    route_by_tracker.py: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+        import sys
+        from urllib.parse import urlsplit
+
+        tracker_hosts = set()
+        for announce_url in os.environ.get("TR_TORRENT_TRACKERS", "").split(","):
+            try:
+                host = urlsplit(announce_url.strip()).hostname
+            except ValueError:
+                continue
+            if host:
+                tracker_hosts.add(host.lower().rstrip("."))
+
+        categories = set()
+        for host in tracker_hosts:
+            if host == "t.myanonamouse.net" or host.endswith(".myanonamouse.net"):
+                categories.add("mouse")
+            elif host in {"flacsfor.me", "redacted.ch"} or host.endswith(".redacted.ch"):
+                categories.add("red")
+
+        if len(categories) != 1:
+            sys.exit(0)
+
+        torrent_id = os.environ.get("TR_TORRENT_ID", "")
+        if not torrent_id.isdigit():
+            sys.exit("Missing or invalid TR_TORRENT_ID")
+
+        destination = f"/downloads/complete/{categories.pop()}"
+        current_directory = os.path.normpath(os.environ.get("TR_TORRENT_DIR", ""))
+        if current_directory == destination:
+            sys.exit(0)
+
+        os.makedirs(destination, exist_ok=True)
+        subprocess.run(
+            ["transmission-remote", "127.0.0.1:9091", "--torrent", torrent_id, "--move", destination],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+---
 kind: Deployment
 apiVersion: apps/v1
 metadata:
@@ -12,6 +60,8 @@ metadata:
         app: transmission
 spec:
     replicas: 1
+    strategy:
+        type: Recreate
     selector:
         matchLabels:
             app: transmission
@@ -24,6 +74,22 @@ spec:
         spec:
             nodeSelector:
                 kubernetes.io/hostname: bfg
+            initContainers:
+                - name: configure-tracker-sort-hook
+                  image: ghcr.io/linuxserver/transmission:4.0.6
+                  command:
+                      - /bin/sh
+                      - -ec
+                  args:
+                      - |
+                          jq '."script-torrent-done-enabled" = true | ."script-torrent-done-filename" = "/scripts/route_by_tracker.py"' /config/settings.json > /config/settings.json.tmp
+                          mv /config/settings.json.tmp /config/settings.json
+                  securityContext:
+                      runAsUser: 1000
+                      runAsGroup: 1000
+                  volumeMounts:
+                      - mountPath: /config
+                        name: config
             containers:
                 - name: transmission-container
                   image: ghcr.io/linuxserver/transmission:4.0.6
@@ -40,6 +106,10 @@ spec:
                         name: files
                       - mountPath: /config
                         name: config
+                      - mountPath: /scripts/route_by_tracker.py
+                        name: tracker-sort-script
+                        subPath: route_by_tracker.py
+                        readOnly: true
 
                   env:
                       - name: PUID
@@ -54,6 +124,11 @@ spec:
                   nfs:
                       server: 192.168.1.155
                       path: /mnt/fast/torrents/mine/config
+
+                - name: tracker-sort-script
+                  configMap:
+                      name: transmission-tracker-sort-script
+                      defaultMode: 493
 
                 - name: files
                   nfs:
