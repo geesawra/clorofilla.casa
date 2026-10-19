@@ -11,45 +11,110 @@ metadata:
 data:
     route_by_tracker.py: |
         #!/usr/bin/env python3
+        import json
         import os
         import subprocess
         import sys
+        from datetime import datetime
+        from urllib.error import HTTPError
         from urllib.parse import urlsplit
+        from urllib.request import Request, urlopen
 
-        tracker_hosts = set()
-        for announce_url in os.environ.get("TR_TORRENT_TRACKERS", "").split(","):
+        def log(message):
+            line = f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}\n"
             try:
-                host = urlsplit(announce_url.strip()).hostname
-            except ValueError:
-                continue
-            if host:
-                tracker_hosts.add(host.lower().rstrip("."))
+                with open("/config/route_by_tracker.log", "a", encoding="utf-8") as log_file:
+                    log_file.write(line)
+            except OSError as error:
+                print(f"tracker routing log failed: {type(error).__name__}", file=sys.stderr)
 
-        categories = set()
-        for host in tracker_hosts:
-            if host == "t.myanonamouse.net" or host.endswith(".myanonamouse.net"):
-                categories.add("mouse")
-            elif host in {"flacsfor.me", "redacted.ch"} or host.endswith(".redacted.ch"):
-                categories.add("red")
+        def tracker_hosts(announce_urls):
+            hosts = set()
+            for announce_url in announce_urls:
+                try:
+                    host = urlsplit(announce_url.strip()).hostname
+                except ValueError:
+                    continue
+                if host:
+                    hosts.add(host.lower().rstrip("."))
+            return hosts
 
-        if len(categories) != 1:
-            sys.exit(0)
+        def categories_for(hosts):
+            categories = set()
+            for host in hosts:
+                if host == "t.myanonamouse.net" or host.endswith(".myanonamouse.net"):
+                    categories.add("mouse")
+                elif host in {"flacsfor.me", "redacted.ch"} or host.endswith(".redacted.ch"):
+                    categories.add("red")
+            return categories
 
-        torrent_id = os.environ.get("TR_TORRENT_ID", "")
+        def rpc_torrent(torrent_id):
+            payload = json.dumps({
+                "method": "torrent-get",
+                "arguments": {"ids": [int(torrent_id)], "fields": ["id", "trackerStats"]},
+            }).encode()
+
+            def request(session_id=None):
+                headers = {"Content-Type": "application/json"}
+                if session_id:
+                    headers["X-Transmission-Session-Id"] = session_id
+                req = Request("http://127.0.0.1:9091/transmission/rpc", data=payload, headers=headers)
+                try:
+                    with urlopen(req, timeout=5) as response:
+                        return json.load(response)
+                except HTTPError as error:
+                    if error.code != 409:
+                        raise
+                    next_session_id = error.headers.get("X-Transmission-Session-Id")
+                    if not next_session_id:
+                        raise
+                    return request(next_session_id)
+
+            torrents = request().get("arguments", {}).get("torrents", [])
+            return torrents[0] if torrents else None
+
+        torrent_id = os.environ.get("TR_TORRENT_ID", "").strip()
         if not torrent_id.isdigit():
+            log("skip reason=invalid-torrent-id")
             sys.exit("Missing or invalid TR_TORRENT_ID")
 
-        destination = f"/downloads/complete/{categories.pop()}"
-        current_directory = os.path.normpath(os.environ.get("TR_TORRENT_DIR", ""))
-        if current_directory == destination:
+        tracker_urls = os.environ.get("TR_TORRENT_TRACKERS", "").replace("\n", ",").split(",")
+        hosts = tracker_hosts(tracker_urls)
+        categories = categories_for(hosts)
+        if len(categories) != 1:
+            try:
+                torrent = rpc_torrent(torrent_id)
+                if torrent:
+                    hosts = tracker_hosts(
+                        tracker.get("announce", "")
+                        for tracker in torrent.get("trackerStats", [])
+                    )
+                    categories = categories_for(hosts)
+            except Exception as error:
+                log(f"tracker lookup failed id={torrent_id} error={type(error).__name__}")
+
+        if len(categories) != 1:
+            log(f"skip id={torrent_id} reason=unmatched-or-ambiguous trackers={','.join(sorted(hosts))}")
             sys.exit(0)
 
-        os.makedirs(destination, exist_ok=True)
-        subprocess.run(
-            ["transmission-remote", "127.0.0.1:9091", "--torrent", torrent_id, "--move", destination],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
+        category = categories.pop()
+        destination = f"/downloads/complete/{category}"
+        current_directory = os.path.normpath(os.environ.get("TR_TORRENT_DIR", ""))
+        if current_directory == destination:
+            log(f"skip id={torrent_id} reason=already-routed category={category}")
+            sys.exit(0)
+
+        try:
+            os.makedirs(destination, exist_ok=True)
+            subprocess.run(
+                ["transmission-remote", "127.0.0.1:9091", "--torrent", torrent_id, "--move", destination],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+        except Exception as error:
+            log(f"move failed id={torrent_id} category={category} error={type(error).__name__}")
+            raise
+        log(f"moved id={torrent_id} category={category}")
 ---
 kind: Deployment
 apiVersion: apps/v1
@@ -106,9 +171,8 @@ spec:
                         name: files
                       - mountPath: /config
                         name: config
-                      - mountPath: /scripts/route_by_tracker.py
+                      - mountPath: /scripts
                         name: tracker-sort-script
-                        subPath: route_by_tracker.py
                         readOnly: true
 
                   env:
