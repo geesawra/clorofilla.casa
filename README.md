@@ -121,10 +121,12 @@ Lidarr web UI. Jackett remains in place.
 Audiobookshelf is available at
 [`https://ab.clorofilla.casa`](https://ab.clorofilla.casa). Its audiobook
 library is mounted read-only from
-`/mnt/fast/torrents/mine/files/complete/mouse`; its configuration and metadata
-use local K3s storage on `bfg` because the configuration contains a SQLite
-database. Create the initial Audiobookshelf administrator account in the web
-UI, then add `/audiobooks` as a library location. Deploy it with the
+`/mnt/fast/torrents/mine/files/complete/mouse` at `/audiobooks`. On this
+instance, the `Mouse` library is already registered in the SQLite config
+database, which uses local K3s storage on `bfg`. Create the initial
+Audiobookshelf administrator account in the web UI; the library will be
+available after setup. With a new config PVC, create the admin account first
+and add `/audiobooks` as a library location. Deploy it with the
 `audiobookshelf` tag.
 
 For indexers that require Cloudflare challenges, FlareSolverr runs in a
