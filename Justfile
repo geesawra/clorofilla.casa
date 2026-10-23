@@ -12,7 +12,8 @@ bootstrap:
 
 # Lint and validate Ansible syntax after ensuring dependencies are installed.
 check: bootstrap
-    ansible-lint ansible/1_setup.yml ansible/2_services.yml ansible/3_monitoring.yml
+    ansible-lint ansible/1_setup.yml ansible/2_services.yml ansible/3_monitoring.yml ansible/dns.yml
+    ansible-playbook --syntax-check ansible/dns.yml -i ansible/inventory/hosts.yml
     ansible-playbook --syntax-check ansible/1_setup.yml -i ansible/inventory/hosts.yml --vault-password-file .vault_password
     ansible-playbook --syntax-check ansible/2_services.yml -i ansible/inventory/hosts.yml
     ansible-playbook --syntax-check ansible/3_monitoring.yml -i ansible/inventory/hosts.yml

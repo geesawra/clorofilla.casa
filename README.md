@@ -29,6 +29,25 @@ TAILSCALE_KEY='tskey-…' just deploy
 To apply one service or playbook, use its Ansible tag and the playbook under
 `ansible/`.
 
+## DNS
+
+[`ansible/dns.yml`](ansible/dns.yml) manages a wildcard A record pointing
+`*.clorofilla.casa` to `bfg`'s current Tailscale IPv4 address. It runs separately
+from `just deploy`. Enable Porkbun API access for the domain and use the existing
+Vault keys `porkbun_api_key` and `porkbun_api_secret` with DNS read/write access.
+Preview from the repository root with:
+
+```sh
+ansible-playbook ansible/dns.yml -i ansible/inventory/hosts.yml \
+  --vault-password-file .vault_password --check
+```
+
+Omit `--check` to apply. Preview reads Tailscale on `bfg` and the Porkbun zone;
+it sends no DNS writes. Existing explicit records override the wildcard, and
+the root domain needs a separate record. No records are deleted. Traefik keeps
+issuing certificates per hostname through its existing Porkbun DNS challenge;
+new routes must specify `tls.certResolver: default`.
+
 ## Manual service setup
 
 - **Miniflux**: available at

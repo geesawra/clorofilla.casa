@@ -1,0 +1,120 @@
+---
+- name: "Provision wildcard DNS for bfg"
+  hosts: bfg
+  gather_facts: false
+  become: false
+  tags: dns
+
+  tasks:
+    # Tailscale is the source of truth; no address is copied into inventory.
+    - name: "Read bfg's Tailscale IPv4 address"
+      ansible.builtin.command:
+        argv: [tailscale, ip, "-4"]
+      register: dns_tailscale_ip
+      changed_when: false
+      check_mode: false
+
+    - name: "Validate the Tailscale address and DNS settings"
+      ansible.builtin.assert:
+        that:
+          - dns_tailscale_ip['stdout'] | trim is match('^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}$')
+          - dns_tailscale_ip['stdout'] | trim | split('.') | map('int') | max <= 255
+          - porkbun_dns_domain is match('^[a-z0-9][a-z0-9.-]+[a-z0-9]$')
+          - porkbun_dns_ttl | int >= 600
+        fail_msg: "Expected one Tailscale IPv4 address, a DNS domain, and a TTL of at least 600 seconds."
+
+    - name: "Validate existing Vault credentials"
+      ansible.builtin.assert:
+        that:
+          - porkbun_api_key | default('') | length > 0
+          - porkbun_api_secret | default('') | length > 0
+        fail_msg: "Provide porkbun_api_key and porkbun_api_secret through Ansible Vault."
+      no_log: true
+
+    # This POST only reads the zone, including during --check.
+    - name: "Retrieve Porkbun DNS records"
+      ansible.builtin.uri:
+        url: 'https://api.porkbun.com/api/json/v3/dns/retrieve/{{ porkbun_dns_domain }}'
+        method: POST
+        body_format: json
+        body:
+          apikey: '{{ porkbun_api_key }}'
+          secretapikey: '{{ porkbun_api_secret }}'
+        follow_redirects: none
+        return_content: true
+        timeout: 30
+      delegate_to: localhost
+      register: dns_zone
+      changed_when: false
+      failed_when: >-
+        dns_zone['status'] != 200 or
+        dns_zone['json']['status'] | default('ERROR') != 'SUCCESS' or
+        dns_zone['json']['records'] is not defined
+      check_mode: false
+      no_log: true
+
+    - name: "Select existing wildcard records"
+      ansible.builtin.set_fact:
+        dns_wildcard_records: >-
+          {{ dns_zone['json']['records']
+             | selectattr('name', 'in', ['*.' + porkbun_dns_domain, '*']) | list }}
+
+    - name: "Refuse ambiguous or conflicting wildcard records"
+      ansible.builtin.assert:
+        that:
+          - dns_wildcard_records | selectattr('type', 'match', '^A$') | list | length <= 1
+          - dns_wildcard_records | selectattr('type', 'match', '^CNAME$') | list | length == 0
+        fail_msg: "Resolve duplicate wildcard A records or a wildcard CNAME in Porkbun before retrying."
+
+    - name: "Determine the required wildcard change"
+      ansible.builtin.set_fact:
+        dns_wildcard_a: >-
+          {{ dns_wildcard_records | selectattr('type', 'match', '^A$') | first | default({}) }}
+
+    - name: "Report the desired wildcard A record"
+      ansible.builtin.debug:
+        msg: >-
+          *.{{ porkbun_dns_domain }} A {{ dns_tailscale_ip['stdout'] | trim }}
+          (TTL {{ porkbun_dns_ttl }});
+          current: {{ dns_wildcard_a['content'] | default('absent') }}
+          (TTL {{ dns_wildcard_a['ttl'] | default('absent') }}).
+      changed_when: >-
+        dns_wildcard_a['content'] | default('') != dns_tailscale_ip['stdout'] | trim or
+        dns_wildcard_a['ttl'] | default(0) | int != porkbun_dns_ttl | int
+      when: ansible_check_mode
+
+    - name: "Create or update the wildcard A record"
+      ansible.builtin.uri:
+        url: >-
+          https://api.porkbun.com/api/json/v3/dns/{{ 'edit' if dns_wildcard_a else 'create' }}/{{ porkbun_dns_domain }}{{
+          '/' + (dns_wildcard_a['id'] | string) if dns_wildcard_a else '' }}
+        method: POST
+        body_format: json
+        body:
+          apikey: '{{ porkbun_api_key }}'
+          secretapikey: '{{ porkbun_api_secret }}'
+          name: "*"
+          type: "A"
+          content: '{{ dns_tailscale_ip["stdout"] | trim }}'
+          ttl: '{{ porkbun_dns_ttl | int }}'
+        follow_redirects: none
+        return_content: true
+        timeout: 30
+      delegate_to: localhost
+      register: dns_write
+      changed_when: true
+      failed_when: >-
+        dns_write['status'] != 200 or
+        dns_write['json']['status'] | default('ERROR') != 'SUCCESS'
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - >-
+          dns_wildcard_a['content'] | default('') != dns_tailscale_ip['stdout'] | trim or
+          dns_wildcard_a['ttl'] | default(0) | int != porkbun_dns_ttl | int
+
+    - name: "Report Porkbun DNS warnings"
+      ansible.builtin.debug:
+        msg: '{{ dns_write["json"]["warnings"] }}'
+      when:
+        - dns_write['json']['warnings'] | default([]) | length > 0
