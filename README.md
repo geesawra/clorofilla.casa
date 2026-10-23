@@ -31,6 +31,14 @@ To apply one service or playbook, use its Ansible tag and the playbook under
 
 ## Manual service setup
 
+- **Gonic**: the music endpoint remains
+  [`navidrome.clorofilla.casa`](https://navidrome.clorofilla.casa). Its web page
+  manages accounts and scans; use a Subsonic client for playback. A fresh
+  database starts with `admin` / `admin`; change that password before use.
+  Accounts and playlists are separate from Navidrome; its old data PVC
+  remains in namespace `navidrome` for recovery.
+  Gonic's database, playlists, and podcasts use local storage on `bfg`;
+  music stays read-only on the NAS. See [`gonic.yml`](ansible/k8s/gonic.yml).
 - **Audiobookshelf**: create the initial administrator at
   [`ab.clorofilla.casa`](https://ab.clorofilla.casa). The current config already
   has a `Mouse` library at `/audiobooks`, mounted read-only from the mouse

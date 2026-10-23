@@ -1,0 +1,173 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gonic
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gonic-data
+  namespace: gonic
+spec:
+  # SQLite, playlists, and podcasts stay on bfg; only music uses NFS.
+  storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gonic
+  namespace: gonic
+  labels:
+    app: gonic
+spec:
+  replicas: 1
+  # Never run two servers against the same SQLite database.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gonic
+  template:
+    metadata:
+      labels:
+        app: gonic
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: bfg
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: prepare-data
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -ec
+            - mkdir -p /data/podcasts /data/playlists
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: gonic
+          image: sentriz/gonic:v0.22.0
+          ports:
+            - name: http
+              containerPort: 4747
+          env:
+            - name: TZ
+              value: "Europe/Rome"
+            - name: GONIC_LISTEN_ADDR
+              value: "0.0.0.0:4747"
+            - name: GONIC_DB_PATH
+              value: "/data/gonic.db"
+            - name: GONIC_MUSIC_PATH
+              value: "Old->/music/old,Mine->/music/mine"
+            - name: GONIC_EXCLUDE_PATTERN
+              value: "^/music/mine/mouse(/|$)"
+            - name: GONIC_PODCAST_PATH
+              value: "/data/podcasts"
+            - name: GONIC_PLAYLISTS_PATH
+              value: "/data/playlists"
+            - name: GONIC_CACHE_PATH
+              value: "/cache"
+            - name: GONIC_SCAN_AT_START_ENABLED
+              value: "true"
+            # Poll NFS too, since remote changes may not produce watcher events.
+            - name: GONIC_SCAN_INTERVAL
+              value: "1"
+            - name: GONIC_SCAN_WATCHER_ENABLED
+              value: "true"
+            - name: GONIC_TRANSCODE_CACHE_SIZE
+              value: "512"
+            - name: GONIC_TRANSCODE_EJECT_INTERVAL
+              value: "10"
+          readinessProbe:
+            httpGet:
+              path: /admin/login
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "1Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: cache
+              mountPath: /cache
+            - name: music-old
+              mountPath: /music/old
+              readOnly: true
+            - name: music-mine
+              mountPath: /music/mine
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gonic-data
+        - name: cache
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: music-old
+          nfs:
+            server: "192.168.1.155"
+            path: /mnt/main/data/usb-disk-1/Music
+            readOnly: true
+        - name: music-mine
+          nfs:
+            server: "192.168.1.155"
+            path: /mnt/fast/torrents/mine/files/complete
+            readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gonic
+  namespace: gonic
+spec:
+  selector:
+    app: gonic
+  ports:
+    - name: http
+      port: 4747
+      targetPort: http
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gonic-route
+  namespace: gonic
+  annotations:
+    gethomepage.dev/description: Music streaming
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Music
+    gethomepage.dev/href: https://navidrome.clorofilla.casa
+    gethomepage.dev/icon: gonic.png
+    gethomepage.dev/name: Gonic
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`navidrome.clorofilla.casa`)
+      priority: 10
+      services:
+        - name: gonic
+          port: 4747
+  tls:
+    certResolver: default

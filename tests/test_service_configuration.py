@@ -187,15 +187,28 @@ def test_tuned_is_optional_and_selects_only_the_requested_profile():
     assert all("not ansible_check_mode" in task["when"] for task in block["block"])
 
 
-def test_navidrome_no_longer_installs_or_uses_audiomuse():
-    text = (ROOT / "ansible/k8s/navidrome.yml").read_text()
-    assert "wget" not in text
-    assert "rm -f /data/plugins/audiomuseai.ndp" in text
+def test_gonic_keeps_the_music_endpoint_and_database_off_nfs():
+    text = (ROOT / "ansible/k8s/gonic.yml").read_text()
     documents = list(yaml.safe_load_all(text))
     deployment = next(doc for doc in documents if doc["kind"] == "Deployment")
-    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
-    agents = next(item["value"] for item in env if item["name"] == "ND_AGENTS")
-    assert agents == "lastfm,spotify,deezer"
+    pvc = next(doc for doc in documents if doc["kind"] == "PersistentVolumeClaim")
+    route = next(doc for doc in documents if doc["kind"] == "IngressRoute")
+    assert pvc["spec"]["storageClassName"] == "local-path"
+    assert deployment["spec"]["strategy"]["type"] == "Recreate"
+    pod = deployment["spec"]["template"]["spec"]
+    env = {item["name"]: item["value"] for item in pod["containers"][0]["env"]}
+    assert int(env["GONIC_SCAN_INTERVAL"]) > 0
+    assert env["GONIC_SCAN_AT_START_ENABLED"] == "true"
+    assert env["GONIC_SCAN_WATCHER_ENABLED"] == "true"
+    assert all(volume["nfs"]["readOnly"] for volume in pod["volumes"] if "nfs" in volume)
+    assert route["spec"]["routes"][0]["match"] == "Host(`navidrome.clorofilla.casa`)"
+    tasks = load("ansible/2_services.yml")[1]["tasks"]
+    deploy = next(task for task in tasks if task["name"] == "Deploy Gonic")
+    retire = next(task for task in tasks if task["name"].startswith("Remove superseded Navidrome"))
+    assert tasks.index(deploy) < tasks.index(retire)
+    assert deploy["kubernetes.core.k8s"]["wait"] is True
+    removed = retire["kubernetes.core.k8s"]["definition"]
+    assert {doc["kind"] for doc in removed} == {"Deployment", "Service", "IngressRoute"}
 
 
 def test_all_traefik_routes_are_discoverable_by_homepage():

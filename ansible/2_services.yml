@@ -424,11 +424,38 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Deploy Navidrome
-      tags: navidrome,audiomuse
+    - name: Deploy Gonic
+      tags: gonic,navidrome
       kubernetes.core.k8s:
         state: present
-        src: k8s/navidrome.yml
+        src: k8s/gonic.yml
+        wait: true
+        wait_timeout: 300
+      when: not ansible_check_mode
+
+    # Keep the old namespace and PVCs for rollback and playlist recovery.
+    - name: Remove superseded Navidrome workloads and route
+      tags: gonic,navidrome
+      kubernetes.core.k8s:
+        state: absent
+        definition:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            metadata:
+              name: navidrome-route
+              namespace: navidrome
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: navidrome-deployment
+              namespace: navidrome
+          - apiVersion: v1
+            kind: Service
+            metadata:
+              name: navidrome-service
+              namespace: navidrome
+        wait: true
+      when: not ansible_check_mode
 
     - name: Uninstall AudioMuse-AI
       tags: navidrome,audiomuse
