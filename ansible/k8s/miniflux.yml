@@ -35,6 +35,8 @@ spec:
       containers:
         - name: miniflux
           image: ghcr.io/miniflux/miniflux:2.3.4
+          # The miniflux Ansible tag enables Google Reader for admin in PostgreSQL
+          # after this Deployment is ready; see miniflux_google_reader.sql.
           env:
             - name: DATABASE_URL
               valueFrom:

@@ -35,7 +35,12 @@ To apply one service or playbook, use its Ansible tag and the playbook under
   [`miniflux.clorofilla.casa`](https://miniflux.clorofilla.casa).
   Deploy with the `miniflux` tag. On a fresh database, create an administrator
   with `kubectl exec -it -n miniflux deploy/miniflux -- /usr/bin/miniflux -create-admin`;
-  use `-reset-password` to recover access. PostgreSQL data stays on local storage
+  use `-reset-password` to recover access. After creating `admin` on a fresh database,
+  rerun the `miniflux` tag. Deployment enables **Google Reader API** for `admin`,
+  initially using its login credentials and preserving any separately configured
+  integration credentials on later runs. Change those under **Settings → Integrations**.
+  Use `https://miniflux.clorofilla.casa` as the client server URL.
+  PostgreSQL data stays on local storage
   on `bfg`. See [`miniflux.yml`](ansible/k8s/miniflux.yml).
 - **Gonic**: the music endpoint remains
   [`navidrome.clorofilla.casa`](https://navidrome.clorofilla.casa). Its web page
