@@ -31,6 +31,12 @@ To apply one service or playbook, use its Ansible tag and the playbook under
 
 ## Manual service setup
 
+- **Miniflux**: available at
+  [`miniflux.clorofilla.casa`](https://miniflux.clorofilla.casa).
+  Deploy with the `miniflux` tag. On a fresh database, create an administrator
+  with `kubectl exec -it -n miniflux deploy/miniflux -- /usr/bin/miniflux -create-admin`;
+  use `-reset-password` to recover access. PostgreSQL data stays on local storage
+  on `bfg`. See [`miniflux.yml`](ansible/k8s/miniflux.yml).
 - **Gonic**: the music endpoint remains
   [`navidrome.clorofilla.casa`](https://navidrome.clorofilla.casa). Its web page
   manages accounts and scans; use a Subsonic client for playback. A fresh

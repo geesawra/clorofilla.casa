@@ -1,0 +1,113 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: miniflux-database
+  namespace: miniflux
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+    storageClass: local-path
+  bootstrap:
+    initdb:
+      database: miniflux
+      owner: miniflux
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miniflux
+  namespace: miniflux
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: miniflux
+  template:
+    metadata:
+      labels:
+        app: miniflux
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: miniflux
+          image: ghcr.io/miniflux/miniflux:2.3.4
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: miniflux-database-app
+                  key: uri
+            - name: BASE_URL
+              value: https://miniflux.clorofilla.casa
+            - name: LISTEN_ADDR
+              value: "0.0.0.0:8080"
+            - name: HTTPS
+              value: "1"
+            - name: RUN_MIGRATIONS
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: miniflux
+  namespace: miniflux
+spec:
+  selector:
+    app: miniflux
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: miniflux-route
+  namespace: miniflux
+  annotations:
+    gethomepage.dev/description: RSS feed reader
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Services
+    gethomepage.dev/href: https://miniflux.clorofilla.casa
+    gethomepage.dev/icon: miniflux.png
+    gethomepage.dev/name: Miniflux
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`miniflux.clorofilla.casa`)
+      services:
+        - name: miniflux
+          port: 8080
+  tls:
+    certResolver: default

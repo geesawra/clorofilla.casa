@@ -251,14 +251,14 @@
       when: not ansible_check_mode
 
     - name: Deploy postgres operator
-      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      tags: postgres,immich,immich-ml,audiomuse,navidrome,miniflux
       kubernetes.core.k8s:
         state: present
         src: >-
           https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
 
     - name: Wait for CloudNativePG CRDs to be established
-      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      tags: postgres,immich,immich-ml,audiomuse,navidrome,miniflux
       ansible.builtin.command: >-
         kubectl wait --for=condition=Established
         crd/clusters.postgresql.cnpg.io
@@ -268,12 +268,30 @@
       changed_when: false
 
     - name: Wait for CloudNativePG controller to be Available
-      tags: postgres,immich,immich-ml,audiomuse,navidrome
+      tags: postgres,immich,immich-ml,audiomuse,navidrome,miniflux
       ansible.builtin.command: >-
         kubectl wait --for=condition=Available
         deployment/cnpg-controller-manager
         -n cnpg-system --timeout=180s
       changed_when: false
+
+    - name: Create Miniflux namespace
+      tags: miniflux
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: miniflux
+      when: not ansible_check_mode
+
+    - name: Deploy Miniflux and its database
+      tags: miniflux
+      kubernetes.core.k8s:
+        state: present
+        src: k8s/miniflux.yml
+        wait: true
+        wait_timeout: 300
+      when: not ansible_check_mode
 
     - name: Deploy Immich dependencies
       tags: immich,immich-ml
